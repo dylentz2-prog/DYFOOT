@@ -47,8 +47,9 @@ jobs:
           if [ -n "$SDKMANAGER_BIN" ]; then
             echo "Using sdkmanager at $SDKMANAGER_BIN"
             (yes 2>/dev/null || true) | "$SDKMANAGER_BIN" --sdk_root="$SDK_DIR" --licenses > /dev/null || true
-            (yes 2>/dev/null || true) | "$SDKMANAGER_BIN" --sdk_root="$SDK_DIR" --install "platform-tools" "platforms;android-36" "build-tools;36.0.0" || true
-            (yes 2>/dev/null || true) | "$SDKMANAGER_BIN" --sdk_root="$SDK_DIR" --install "platforms;android-36.1" > /dev/null 2>&1 || true
+            (yes 2>/dev/null || true) | "$SDKMANAGER_BIN" --sdk_root="$SDK_DIR" --install "cmdline-tools;latest" "platform-tools" "platforms;android-36" "build-tools;36.0.0" || true
+            (yes 2>/dev/null || true) | "$SDKMANAGER_BIN" --sdk_root="$SDK_DIR" --install "platforms;android-36.1" || true
+            ls -la "$SDK_DIR/platforms" || true
           else
             echo "::warning::sdkmanager not found in $SDK_DIR; relying on preinstalled SDK."
           fi
@@ -106,10 +107,14 @@ jobs:
           if [ ! -f app/google-services.json ] && [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
             printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | tr -d '\r\n' | base64 -d > app/google-services.json
           fi
+          if [ ! -f app/google-services.json ]; then
+            echo "::error::Missing app/google-services.json in repository! Commit app/google-services.json or set GOOGLE_SERVICES_JSON_BASE64 in GitHub Secrets."
+            exit 1
+          fi
 
-      - name: Run unit tests & build Debug APK
+      - name: Build Debug APK
         run: |
-          gradle :app:testDebugUnitTest :app:assembleDebug --no-daemon --stacktrace
+          gradle :app:assembleDebug --no-daemon --console=plain -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
 
       - name: Upload Debug APK artifact
         uses: actions/upload-artifact@v4
@@ -117,6 +122,10 @@ jobs:
           name: dyfoot-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      - name: Run unit tests
+        run: |
+          gradle :app:testDebugUnitTest --no-daemon --console=plain -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
 
       - name: Build Signed Release APK (when release keystore secrets are set)
         env:
@@ -127,7 +136,7 @@ jobs:
           if [ -n "$RELEASE_KEYSTORE_BASE64" ] && [ -n "$STORE_PASSWORD" ] && [ -n "$KEY_PASSWORD" ]; then
             printf '%s' "$RELEASE_KEYSTORE_BASE64" | tr -d '\r\n' | base64 -d > "$RUNNER_TEMP/my-upload-key.jks"
             export KEYSTORE_PATH="$RUNNER_TEMP/my-upload-key.jks"
-            gradle :app:assembleRelease --no-daemon --stacktrace
+            gradle :app:assembleRelease --no-daemon --console=plain -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
             echo "RELEASE_APK_BUILT=true" >> "$GITHUB_ENV"
           else
             echo "Skipping Release APK: add RELEASE_KEYSTORE_BASE64, STORE_PASSWORD, and KEY_PASSWORD in GitHub repository secrets to build app-release.apk."
