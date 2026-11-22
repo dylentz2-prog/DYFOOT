@@ -166,8 +166,9 @@ class DyfootPlatformTest {
     @Test
     fun `external sports service recognizes placeholder keys as unconfigured`() {
         val service = ExternalSportsService()
-        assertFalse(service.hasFootballDataApiKey())
-        assertFalse(service.hasMobileMoneyGatewayKey())
+        assertEquals("", service.sanitizeConfiguredKey("YOUR_FOOTBALL_DATA_API_KEY", "YOUR_FOOTBALL_DATA_API_KEY"))
+        assertEquals("", service.sanitizeConfiguredKey("  ", "YOUR_MOBILE_MONEY_MERCHANT_KEY"))
+        assertEquals("live_token_123", service.sanitizeConfiguredKey(" live_token_123 ", "YOUR_FOOTBALL_DATA_API_KEY"))
     }
 
     @Test

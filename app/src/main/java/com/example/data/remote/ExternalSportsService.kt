@@ -78,15 +78,16 @@ class ExternalSportsService {
             .build()
     }
 
-    private fun resolveFootballDataKey(): String {
-        val raw = BuildConfig.FOOTBALL_DATA_API_KEY.trim()
-        return if (raw.isEmpty() || raw == "YOUR_FOOTBALL_DATA_API_KEY") "" else raw
+    internal fun sanitizeConfiguredKey(raw: String, placeholder: String): String {
+        val trimmed = raw.trim()
+        return if (trimmed.isEmpty() || trimmed == placeholder || trimmed.startsWith("YOUR_")) "" else trimmed
     }
 
-    private fun resolveMobileMoneyKey(): String {
-        val raw = BuildConfig.MOBILE_MONEY_MERCHANT_KEY.trim()
-        return if (raw.isEmpty() || raw == "YOUR_MOBILE_MONEY_MERCHANT_KEY") "" else raw
-    }
+    private fun resolveFootballDataKey(): String =
+        sanitizeConfiguredKey(BuildConfig.FOOTBALL_DATA_API_KEY, "YOUR_FOOTBALL_DATA_API_KEY")
+
+    private fun resolveMobileMoneyKey(): String =
+        sanitizeConfiguredKey(BuildConfig.MOBILE_MONEY_MERCHANT_KEY, "YOUR_MOBILE_MONEY_MERCHANT_KEY")
 
     fun hasFootballDataApiKey(): Boolean = resolveFootballDataKey().isNotEmpty()
 

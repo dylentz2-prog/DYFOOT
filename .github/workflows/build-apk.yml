@@ -108,8 +108,7 @@ jobs:
             printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | tr -d '\r\n' | base64 -d > app/google-services.json
           fi
           if [ ! -f app/google-services.json ]; then
-            echo "::error::Missing app/google-services.json in repository! Commit app/google-services.json or set GOOGLE_SERVICES_JSON_BASE64 in GitHub Secrets."
-            exit 1
+            echo "::warning::app/google-services.json is missing in GitHub. Building APK without google-services.json; add GOOGLE_SERVICES_JSON_BASE64 in GitHub Secrets for Firebase & Google Sign-In."
           fi
 
       - name: Build Debug APK
