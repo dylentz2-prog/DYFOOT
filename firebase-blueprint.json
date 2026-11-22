@@ -1,0 +1,522 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Public-safe user profile and role metadata for DYFOOT.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "username": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoUrl": { "type": "string" },
+        "bio": { "type": "string" },
+        "role": { "type": "string", "enum": ["OWNER", "ADMIN", "VIP_MEMBER", "FREE_MEMBER"] },
+        "vipTier": { "type": "string", "enum": ["NONE", "DAILY", "WEEKLY", "MONTHLY", "QUARTERLY", "ANNUAL"] },
+        "vipExpiresAt": { "type": "number" },
+        "suspended": { "type": "boolean" },
+        "searchable": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "username", "displayName", "role", "vipTier", "vipExpiresAt", "suspended", "searchable", "createdAt", "updatedAt"]
+    },
+    "UserPrivateInfo": {
+      "title": "UserPrivateInfo",
+      "description": "Isolated PII and notification preferences for a user.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "notifyTips": { "type": "boolean" },
+        "notifyNews": { "type": "boolean" },
+        "notifyCommunity": { "type": "boolean" },
+        "notifyPayments": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "notifyTips", "notifyNews", "notifyCommunity", "notifyPayments", "updatedAt"]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Explicitly authorized platform administrator record assigned by Owner.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "email": { "type": "string" },
+        "assignedBy": { "type": "string" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "email", "assignedBy", "active", "createdAt"]
+    },
+    "Membership": {
+      "title": "Membership",
+      "description": "Authoritative VIP membership status checked by Firestore security rules.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "planId": { "type": "string" },
+        "planName": { "type": "string" },
+        "status": { "type": "string", "enum": ["ACTIVE", "EXPIRED", "NONE"] },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "planId", "planName", "status", "expiresAt", "updatedAt"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "Tanzania mobile money subscription payment record.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userDisplayName": { "type": "string" },
+        "planId": { "type": "string" },
+        "planName": { "type": "string" },
+        "amountTzs": { "type": "number" },
+        "currency": { "type": "string" },
+        "provider": { "type": "string", "enum": ["M-PESA", "TIGO_PESA", "AIRTEL_MONEY", "HALOPESA"] },
+        "payerPhone": { "type": "string" },
+        "merchantNumber": { "type": "string" },
+        "transactionRef": { "type": "string" },
+        "providerRef": { "type": "string" },
+        "status": { "type": "string", "enum": ["PENDING_VERIFICATION", "VERIFIED_PAID", "FAILED", "REFUNDED"] },
+        "verifiedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "planId", "planName", "amountTzs", "currency", "provider", "payerPhone", "merchantNumber", "transactionRef", "status", "verifiedBy", "createdAt", "updatedAt"]
+    },
+    "Tip": {
+      "title": "Tip",
+      "description": "Football tip and betting slip metadata (public/free or VIP teaser).",
+      "type": "object",
+      "properties": {
+        "authorId": { "type": "string" },
+        "matchName": { "type": "string" },
+        "homeTeam": { "type": "string" },
+        "awayTeam": { "type": "string" },
+        "competition": { "type": "string" },
+        "kickoffLabel": { "type": "string" },
+        "kickoffEpochMs": { "type": "number" },
+        "tier": { "type": "string", "enum": ["FREE", "VIP"] },
+        "market": { "type": "string" },
+        "selection": { "type": "string" },
+        "odds": { "type": "string" },
+        "bookmakerName": { "type": "string" },
+        "bookmakerCode": { "type": "string" },
+        "predictedScore": { "type": "string" },
+        "analysis": { "type": "string" },
+        "riskLevel": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH"] },
+        "status": { "type": "string", "enum": ["PENDING", "WON", "LOST", "VOID", "POSTPONED"] },
+        "published": { "type": "boolean" },
+        "featured": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorId", "matchName", "homeTeam", "awayTeam", "competition", "kickoffLabel", "tier", "market", "odds", "riskLevel", "status", "published", "featured", "createdAt", "updatedAt"]
+    },
+    "VipTipSecret": {
+      "title": "VipTipSecret",
+      "description": "Protected VIP slip details restricted to active VIP members and admins.",
+      "type": "object",
+      "properties": {
+        "tipId": { "type": "string" },
+        "selection": { "type": "string" },
+        "bookmakerCode": { "type": "string" },
+        "predictedScore": { "type": "string" },
+        "analysis": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tipId", "selection", "analysis", "updatedAt"]
+    },
+    "NewsArticle": {
+      "title": "NewsArticle",
+      "description": "Internal football news, local league reports, transfers, and bilingual (English/Swahili) editorial analysis served without external links.",
+      "type": "object",
+      "properties": {
+        "authorId": { "type": "string" },
+        "title": { "type": "string" },
+        "summary": { "type": "string" },
+        "content": { "type": "string" },
+        "titleSw": { "type": "string" },
+        "summarySw": { "type": "string" },
+        "contentSw": { "type": "string" },
+        "language": { "type": "string", "enum": ["EN", "SW", "BILINGUAL"] },
+        "leagueTag": { "type": "string" },
+        "localFootball": { "type": "boolean" },
+        "category": { "type": "string" },
+        "sourceName": { "type": "string" },
+        "sourceUrl": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "published": { "type": "boolean" },
+        "likesCount": { "type": "number" },
+        "commentsCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorId", "title", "summary", "content", "category", "sourceName", "published", "likesCount", "commentsCount", "createdAt", "updatedAt"]
+    },
+    "Comment": {
+      "title": "Comment",
+      "description": "User comment on a news article or video.",
+      "type": "object",
+      "properties": {
+        "authorId": { "type": "string" },
+        "authorName": { "type": "string" },
+        "text": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorId", "authorName", "text", "createdAt"]
+    },
+    "VideoItem": {
+      "title": "VideoItem",
+      "description": "Vertical sports video item for Watch feed.",
+      "type": "object",
+      "properties": {
+        "authorId": { "type": "string" },
+        "title": { "type": "string" },
+        "caption": { "type": "string" },
+        "creatorName": { "type": "string" },
+        "category": { "type": "string" },
+        "videoUrl": { "type": "string" },
+        "thumbnailUrl": { "type": "string" },
+        "durationSec": { "type": "number" },
+        "published": { "type": "boolean" },
+        "likesCount": { "type": "number" },
+        "commentsCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorId", "title", "caption", "creatorName", "category", "videoUrl", "durationSec", "published", "likesCount", "commentsCount", "createdAt", "updatedAt"]
+    },
+    "PodcastEpisode": {
+      "title": "PodcastEpisode",
+      "description": "Audio podcast episode for Podcasts section.",
+      "type": "object",
+      "properties": {
+        "authorId": { "type": "string" },
+        "title": { "type": "string" },
+        "showName": { "type": "string" },
+        "hostName": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string" },
+        "audioUrl": { "type": "string" },
+        "coverUrl": { "type": "string" },
+        "durationSec": { "type": "number" },
+        "published": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorId", "title", "showName", "hostName", "description", "category", "audioUrl", "durationSec", "published", "createdAt", "updatedAt"]
+    },
+    "Advertisement": {
+      "title": "Advertisement",
+      "description": "Promotional banner and ad campaign managed in Admin Studio.",
+      "type": "object",
+      "properties": {
+        "authorId": { "type": "string" },
+        "title": { "type": "string" },
+        "promoText": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "destinationUrl": { "type": "string" },
+        "placement": { "type": "string", "enum": ["HOME_TOP", "TIPS_BANNER", "SPORT_HUB"] },
+        "active": { "type": "boolean" },
+        "startEpochMs": { "type": "number" },
+        "endEpochMs": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorId", "title", "promoText", "destinationUrl", "placement", "active", "createdAt", "updatedAt"]
+    },
+    "Announcement": {
+      "title": "Announcement",
+      "description": "Official platform announcement.",
+      "type": "object",
+      "properties": {
+        "authorId": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "priority": { "type": "string", "enum": ["NORMAL", "URGENT"] },
+        "published": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorId", "title", "message", "priority", "published", "createdAt", "updatedAt"]
+    },
+    "Fixture": {
+      "title": "Fixture",
+      "description": "Official match fixture, score update, and Live Arena schedule.",
+      "type": "object",
+      "properties": {
+        "authorId": { "type": "string" },
+        "homeTeam": { "type": "string" },
+        "awayTeam": { "type": "string" },
+        "competition": { "type": "string" },
+        "homeScore": { "type": "number" },
+        "awayScore": { "type": "number" },
+        "status": { "type": "string", "enum": ["UPCOMING", "LIVE", "FINISHED", "POSTPONED"] },
+        "minuteLabel": { "type": "string" },
+        "kickoffEpochMs": { "type": "number" },
+        "venue": { "type": "string" },
+        "sourceLabel": { "type": "string" },
+        "streamScheduled": { "type": "boolean" },
+        "streamStatus": { "type": "string", "enum": ["COMING_SOON", "SCHEDULED"] },
+        "eventsSummary": { "type": "string" },
+        "published": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorId", "homeTeam", "awayTeam", "competition", "homeScore", "awayScore", "status", "minuteLabel", "kickoffEpochMs", "sourceLabel", "streamScheduled", "streamStatus", "published", "createdAt", "updatedAt"]
+    },
+    "CommunityGroup": {
+      "title": "CommunityGroup",
+      "description": "Community group chat or 1-to-1 direct conversation.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "directMessage": { "type": "boolean" },
+        "publicRoom": { "type": "boolean" },
+        "createdBy": { "type": "string" },
+        "memberUids": { "type": "string" },
+        "lastMessage": { "type": "string" },
+        "lastSenderName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "directMessage", "publicRoom", "createdBy", "memberUids", "createdAt", "updatedAt"]
+    },
+    "GroupMessage": {
+      "title": "GroupMessage",
+      "description": "Message inside a community group or direct chat.",
+      "type": "object",
+      "properties": {
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "text": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "publicRoom": { "type": "boolean" },
+        "memberUids": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["senderId", "senderName", "text", "publicRoom", "memberUids", "createdAt"]
+    },
+    "NotificationItem": {
+      "title": "NotificationItem",
+      "description": "User notification record.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "category": { "type": "string" },
+        "read": { "type": "boolean" },
+        "deepLinkRoute": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "body", "category", "read", "createdAt"]
+    },
+    "UserBookmark": {
+      "title": "UserBookmark",
+      "description": "User saved/bookmarked item.",
+      "type": "object",
+      "properties": {
+        "contentType": { "type": "string" },
+        "contentId": { "type": "string" },
+        "title": { "type": "string" },
+        "subtitle": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["contentType", "contentId", "title", "createdAt"]
+    },
+    "BlockedUser": {
+      "title": "BlockedUser",
+      "description": "User block entry for Community safety.",
+      "type": "object",
+      "properties": {
+        "blockedUid": { "type": "string" },
+        "blockedName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["blockedUid", "blockedName", "createdAt"]
+    },
+    "ContentReport": {
+      "title": "ContentReport",
+      "description": "User report for community moderation.",
+      "type": "object",
+      "properties": {
+        "reporterId": { "type": "string" },
+        "targetType": { "type": "string" },
+        "targetId": { "type": "string" },
+        "reason": { "type": "string" },
+        "status": { "type": "string", "enum": ["OPEN", "REVIEWED", "RESOLVED"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["reporterId", "targetType", "targetId", "reason", "status", "createdAt"]
+    },
+    "AdminAuditLog": {
+      "title": "AdminAuditLog",
+      "description": "Immutable audit trail for Admin Studio actions.",
+      "type": "object",
+      "properties": {
+        "actorId": { "type": "string" },
+        "actorEmail": { "type": "string" },
+        "action": { "type": "string" },
+        "targetType": { "type": "string" },
+        "targetId": { "type": "string" },
+        "details": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["actorId", "actorEmail", "action", "targetType", "targetId", "details", "createdAt"]
+    },
+    "AppSettings": {
+      "title": "AppSettings",
+      "description": "Platform configuration, categories, and VIP pricing.",
+      "type": "object",
+      "properties": {
+        "vipDailyTzs": { "type": "number" },
+        "vipWeeklyTzs": { "type": "number" },
+        "vipMonthlyTzs": { "type": "number" },
+        "vipQuarterlyTzs": { "type": "number" },
+        "vipAnnualTzs": { "type": "number" },
+        "merchantNumber": { "type": "string" },
+        "merchantName": { "type": "string" },
+        "categories": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["vipWeeklyTzs", "vipMonthlyTzs", "merchantNumber", "merchantName", "categories", "updatedAt"]
+    },
+    "CommunityStatus": {
+      "title": "CommunityStatus",
+      "description": "24-hour disappearing matchday mood status posted by signed-in members.",
+      "type": "object",
+      "properties": {
+        "authorId": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorPhotoUrl": { "type": "string" },
+        "text": { "type": "string" },
+        "themeColor": { "type": "string", "enum": ["LIME", "MIDNIGHT", "EMERALD", "CRIMSON"] },
+        "expiresAtEpochMs": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorId", "authorName", "text", "themeColor", "expiresAtEpochMs", "createdAt"]
+    },
+    "FcmDeviceRegistration": {
+      "title": "FcmDeviceRegistration",
+      "description": "Device FCM token and subscribed favorite match topics/IDs for real-time goal and final score push alerts.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "token": { "type": "string" },
+        "favoriteMatchIds": { "type": "string" },
+        "favoriteTopics": { "type": "string" },
+        "platform": { "type": "string", "enum": ["ANDROID", "IOS", "WEB"] },
+        "language": { "type": "string", "enum": ["ENGLISH", "SWAHILI", "EN", "SW"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "token", "favoriteMatchIds", "favoriteTopics", "platform", "language", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Public-safe user profiles and role metadata."
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/UserPrivateInfo" },
+      "description": "Isolated PII and notification preferences."
+    },
+    "/admins/{userId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Owner-assigned administrators."
+    },
+    "/memberships/{userId}": {
+      "schema": { "$ref": "#/entities/Membership" },
+      "description": "Authoritative VIP membership records."
+    },
+    "/payments/{paymentId}": {
+      "schema": { "$ref": "#/entities/Payment" },
+      "description": "Tanzania mobile money payment logs."
+    },
+    "/tips/{tipId}": {
+      "schema": { "$ref": "#/entities/Tip" },
+      "description": "Public/Free tips and VIP tip teasers."
+    },
+    "/vip_tips_secrets/{tipId}": {
+      "schema": { "$ref": "#/entities/VipTipSecret" },
+      "description": "Protected VIP tip selections, slip codes, and analysis."
+    },
+    "/news/{newsId}": {
+      "schema": { "$ref": "#/entities/NewsArticle" },
+      "description": "Official football news and editorial articles."
+    },
+    "/news/{newsId}/comments/{commentId}": {
+      "schema": { "$ref": "#/entities/Comment" },
+      "description": "Comments on news articles."
+    },
+    "/videos/{videoId}": {
+      "schema": { "$ref": "#/entities/VideoItem" },
+      "description": "Watch feed vertical sports videos."
+    },
+    "/videos/{videoId}/comments/{commentId}": {
+      "schema": { "$ref": "#/entities/Comment" },
+      "description": "Comments on Watch videos."
+    },
+    "/podcasts/{podcastId}": {
+      "schema": { "$ref": "#/entities/PodcastEpisode" },
+      "description": "Podcast audio episodes."
+    },
+    "/advertisements/{adId}": {
+      "schema": { "$ref": "#/entities/Advertisement" },
+      "description": "Promotional banners and ad campaigns."
+    },
+    "/announcements/{announcementId}": {
+      "schema": { "$ref": "#/entities/Announcement" },
+      "description": "Platform-wide announcements."
+    },
+    "/fixtures/{fixtureId}": {
+      "schema": { "$ref": "#/entities/Fixture" },
+      "description": "Official match fixtures and Live Arena schedule."
+    },
+    "/groups/{groupId}": {
+      "schema": { "$ref": "#/entities/CommunityGroup" },
+      "description": "Community group chats and 1-to-1 DMs."
+    },
+    "/groups/{groupId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/GroupMessage" },
+      "description": "Messages inside community chats."
+    },
+    "/statuses/{statusId}": {
+      "schema": { "$ref": "#/entities/CommunityStatus" },
+      "description": "24-hour disappearing community matchday mood statuses."
+    },
+    "/users/{userId}/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/NotificationItem" },
+      "description": "User-scoped notifications."
+    },
+    "/users/{userId}/bookmarks/{bookmarkId}": {
+      "schema": { "$ref": "#/entities/UserBookmark" },
+      "description": "User saved bookmarks."
+    },
+    "/users/{userId}/blocked/{blockedUid}": {
+      "schema": { "$ref": "#/entities/BlockedUser" },
+      "description": "User community block list."
+    },
+    "/users/{userId}/fcm_tokens/{tokenId}": {
+      "schema": { "$ref": "#/entities/FcmDeviceRegistration" },
+      "description": "User FCM push tokens and favorite match subscription lists."
+    },
+    "/reports/{reportId}": {
+      "schema": { "$ref": "#/entities/ContentReport" },
+      "description": "Community moderation reports."
+    },
+    "/admin_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AdminAuditLog" },
+      "description": "Immutable Admin Studio audit logs."
+    },
+    "/app_settings/{settingId}": {
+      "schema": { "$ref": "#/entities/AppSettings" },
+      "description": "Platform configuration and categories."
+    }
+  }
+}

@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">DYFOOT</string>
+    <string name="cd_dyfoot_logo">DYFOOT official emblem</string>
+    <string name="cd_hero_stadium">DYFOOT stadium floodlights banner</string>
+    <string name="sign_in_with_google">Continue with Google</string>
+    <string name="cd_user_avatar">User profile avatar</string>
+    <string name="cd_vip_banner">DYFOOT VIP Club crown banner</string>
+    <string name="cd_podcast_cover">DYFOOT podcast episode artwork</string>
+</resources>

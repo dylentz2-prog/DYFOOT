@@ -1,0 +1,6 @@
+{
+  "name": "DYFOOT",
+  "description": "Premium international football and sports platform featuring live scores, betting tips, Sport Hub media, VIP memberships, community messaging, and Admin Studio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
