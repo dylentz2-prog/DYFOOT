@@ -1,5 +1,6 @@
 package com.example
 
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -7,6 +8,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,18 +18,23 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Podcasts
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SportsSoccer
 import androidx.compose.material.icons.filled.SystemUpdate
@@ -48,11 +55,13 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -60,11 +69,17 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.credentials.CredentialManager
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -118,6 +133,7 @@ import com.example.ui.theme.SlateText
 import com.example.ui.theme.VipAmber
 import com.example.viewmodel.DyfootViewModel
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.auth
@@ -150,36 +166,58 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+internal fun resolveFirebaseAuthOrNull(context: Context): FirebaseAuth? {
+    val appContext = context.applicationContext ?: context
+    val initialized = FirebaseApp.getApps(appContext).isNotEmpty() ||
+        runCatching { FirebaseApp.initializeApp(appContext) != null }.getOrDefault(false)
+    if (!initialized) return null
+    return runCatching { Firebase.auth }.getOrNull()
+}
+
 @Composable
-fun DyfootRoot() {
-    val auth = remember { Firebase.auth }
-    var currentUser by remember { mutableStateOf<FirebaseUser?>(auth.currentUser) }
+fun DyfootRoot(
+    forceSetupScreen: Boolean = false
+) {
+    val context = LocalContext.current
+    var retryTick by remember { mutableIntStateOf(0) }
+    val auth = remember(retryTick, forceSetupScreen) {
+        if (forceSetupScreen) null else resolveFirebaseAuthOrNull(context)
+    }
+    var currentUser by remember(auth) { mutableStateOf<FirebaseUser?>(auth?.currentUser) }
     var showSplash by rememberSaveable { mutableStateOf(true) }
 
-    DisposableEffect(auth) {
-        val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
-            currentUser = firebaseAuth.currentUser
+    if (auth != null) {
+        DisposableEffect(auth) {
+            val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
+                currentUser = firebaseAuth.currentUser
+            }
+            auth.addAuthStateListener(listener)
+            onDispose { auth.removeAuthStateListener(listener) }
         }
-        auth.addAuthStateListener(listener)
-        onDispose { auth.removeAuthStateListener(listener) }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        val user = currentUser
-        if (user == null) {
-            AuthScreen(
-                onAuthSuccess = {
-                    currentUser = Firebase.auth.currentUser
-                }
+        if (auth == null) {
+            FirebaseSetupRequiredScreen(
+                onRetry = { retryTick++ }
             )
         } else {
-            key(user.uid) {
-                DyfootAuthenticatedApp(
-                    uid = user.uid,
-                    onSignedOut = {
-                        currentUser = Firebase.auth.currentUser
+            val user = currentUser
+            if (user == null) {
+                AuthScreen(
+                    onAuthSuccess = {
+                        currentUser = auth.currentUser
                     }
                 )
+            } else {
+                key(user.uid) {
+                    DyfootAuthenticatedApp(
+                        uid = user.uid,
+                        onSignedOut = {
+                            currentUser = auth.currentUser
+                        }
+                    )
+                }
             }
         }
 
@@ -188,6 +226,162 @@ fun DyfootRoot() {
             exit = fadeOut()
         ) {
             Dyfoot3DSplashScreen(onFinish = { showSplash = false })
+        }
+    }
+}
+
+@Composable
+fun FirebaseSetupRequiredScreen(
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        MidnightElevated,
+                        MidnightBlack,
+                        MidnightBlack
+                    )
+                )
+            )
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp, vertical = 28.dp)
+            .testTag("firebase_setup_required"),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 560.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.ic_dyfoot_emblem),
+                    contentDescription = stringResource(R.string.cd_dyfoot_logo),
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(12.dp)),
+                    contentScale = ContentScale.Crop
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = "DYFOOT",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = CrispWhite
+                )
+            }
+
+            Card(
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.cardColors(containerColor = MidnightCard),
+                border = BorderStroke(1.dp, NeonLime.copy(alpha = 0.55f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(22.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = NeonLimeContainer
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.CloudOff,
+                            contentDescription = "Firebase configuration required",
+                            tint = NeonLime,
+                            modifier = Modifier
+                                .padding(12.dp)
+                                .size(30.dp)
+                        )
+                    }
+
+                    Text(
+                        text = "Unganisha Firebase Kwenye APK\nFirebase Setup Needed",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = CrispWhite,
+                        textAlign = TextAlign.Center
+                    )
+
+                    Text(
+                        text = "APK hii ilitengenezwa bila faili la app/google-services.json. Weka faili hilo kwenye GitHub ili kuwasha Google Sign-In, habari na mikeka ya DYFOOT.\n\nThis APK was built without app/google-services.json. Add it in GitHub and rebuild to connect Firebase & Google Sign-In.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = SlateText,
+                        textAlign = TextAlign.Center
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = MidnightCardAlt,
+                        border = BorderStroke(1.dp, MidnightBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "Hatua za Haraka / Quick Fix Steps:",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = NeonLime
+                            )
+                            Text(
+                                text = "1. Weka app/google-services.json kwenye GitHub repo au weka Secret ya GOOGLE_SERVICES_JSON_BASE64.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = CrispWhite
+                            )
+                            Text(
+                                text = "2. Hakikisha SHA-1 ya keystore yako imeongezwa kwenye Firebase Console (com.aistudio.dyfoot.vkmpqz).",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = CrispWhite
+                            )
+                            Text(
+                                text = "3. Endesha GitHub Actions build upya kisha install APK mpya.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = CrispWhite
+                            )
+                        }
+                    }
+
+                    Button(
+                        onClick = onRetry,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = NeonLime,
+                            contentColor = MidnightBlack
+                        ),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                            .minimumInteractiveComponentSize()
+                            .testTag("firebase_setup_retry_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Jaribu Tena / Check Again",
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
         }
     }
 }

@@ -51,7 +51,13 @@ import com.example.ui.i18n.dyfootStrings
 import com.example.ui.screens.AdminBilingualNewsPanel
 import com.example.ui.screens.InAppArticleReaderSheet
 import com.example.ui.theme.DyfootTheme
+import androidx.credentials.CredentialManager
+import com.example.ui.auth.attemptAutoSignIn
+import com.example.ui.auth.onGoogleSignInClicked
 import com.google.firebase.Timestamp
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -536,5 +542,55 @@ class DyfootPlatformTest {
         assertEquals("NBC Premier League", saved.leagueTag)
         assertTrue(saved.localFootball)
         assertEquals("", saved.sourceUrl)
+    }
+
+    @Test
+    fun `firebase setup fallback screen renders cleanly without crashing and triggers retry`() {
+        var retried = false
+
+        composeRule.setContent {
+            DyfootTheme {
+                FirebaseSetupRequiredScreen(
+                    onRetry = { retried = true }
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("firebase_setup_required").assertIsDisplayed()
+        composeRule.onNodeWithTag("firebase_setup_retry_button").performScrollTo().performClick()
+        assertTrue(retried)
+    }
+
+    @Test
+    fun `attemptAutoSignIn and onGoogleSignInClicked fail gracefully when FirebaseApp is uninitialized`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val credentialManager = CredentialManager.create(context)
+        var unauthenticatedCalled = false
+        var successCalled = false
+        var errorMessage: String? = null
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+
+        attemptAutoSignIn(
+            context = context,
+            credentialManager = credentialManager,
+            onAuthSuccess = { successCalled = true },
+            onUnauthenticated = { unauthenticatedCalled = true },
+            scope = scope,
+            authProvider = { null }
+        )
+
+        onGoogleSignInClicked(
+            context = context,
+            credentialManager = credentialManager,
+            onAuthSuccess = { successCalled = true },
+            onAuthError = { errorMessage = it },
+            scope = scope,
+            authProvider = { null }
+        )
+
+        assertFalse(successCalled)
+        assertTrue(unauthenticatedCalled)
+        assertTrue(errorMessage?.contains("google-services.json") == true)
     }
 }
