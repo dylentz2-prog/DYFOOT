@@ -66,9 +66,11 @@ jobs:
           if [ -f debug.keystore.base64 ]; then
             echo "Decoding debug.keystore from debug.keystore.base64..."
             tr -d '\r\n' < debug.keystore.base64 | base64 -d > debug.keystore
+            echo "KEYSTORE_SOURCE=repo_base64" >> "$GITHUB_ENV"
           elif [ -n "$DEBUG_KEYSTORE_BASE64" ]; then
             echo "Decoding debug.keystore from DEBUG_KEYSTORE_BASE64 secret..."
             printf '%s' "$DEBUG_KEYSTORE_BASE64" | tr -d '\r\n' | base64 -d > debug.keystore
+            echo "KEYSTORE_SOURCE=github_secret" >> "$GITHUB_ENV"
           elif [ ! -f debug.keystore ]; then
             echo "debug.keystore.base64 not found; generating standard Android debug.keystore..."
             keytool -genkeypair -noprompt -v \
@@ -81,6 +83,9 @@ jobs:
               -keysize 2048 \
               -validity 10000 \
               -dname "CN=Android Debug,O=Android,C=US"
+            echo "KEYSTORE_SOURCE=ephemeral_generated" >> "$GITHUB_ENV"
+          else
+            echo "KEYSTORE_SOURCE=existing_file" >> "$GITHUB_ENV"
           fi
           test -s debug.keystore
           echo "Debug keystore public certificate fingerprints (register SHA1 in Firebase Console if using newly generated keystore):"
@@ -115,13 +120,33 @@ jobs:
           if [ -f app/google-services.json ]; then
             python3 -m json.tool app/google-services.json > /dev/null
             echo "Verified app/google-services.json is valid JSON."
+            echo "FIREBASE_CONFIG_PRESENT=true" >> "$GITHUB_ENV"
           else
+            echo "FIREBASE_CONFIG_PRESENT=false" >> "$GITHUB_ENV"
             echo "::warning::app/google-services.json is missing in GitHub. Add app/google-services.json or set GOOGLE_SERVICES_JSON / GOOGLE_SERVICES_JSON_BASE64 secret in GitHub Actions."
           fi
 
       - name: Build Debug APK
         run: |
           gradle :app:assembleDebug --no-daemon --console=plain -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
+
+      - name: Write APK build status summary
+        if: always()
+        run: |
+          {
+            echo "### DYFOOT APK Build Status"
+            echo ""
+            if [ "${FIREBASE_CONFIG_PRESENT:-false}" = "true" ]; then
+              echo "- **Firebase (app/google-services.json):** Included (Ready for Firebase Auth & Firestore)"
+            else
+              echo "- **Firebase (app/google-services.json):** MISSING — Add GOOGLE_SERVICES_JSON (or GOOGLE_SERVICES_JSON_BASE64) in GitHub Repository Secrets, or upload app/google-services.json, otherwise the APK opens to the Firebase Setup screen."
+            fi
+            if [ "${KEYSTORE_SOURCE:-}" = "ephemeral_generated" ]; then
+              echo "- **Debug Signing Keystore:** Ephemeral generated — Add DEBUG_KEYSTORE_BASE64 in GitHub Secrets so Google Sign-In SHA-1 matches Firebase."
+            else
+              echo "- **Debug Signing Keystore:** Included (${KEYSTORE_SOURCE:-ok})"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Debug APK artifact
         uses: actions/upload-artifact@v4
