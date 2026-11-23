@@ -473,7 +473,7 @@ class DyfootViewModel(
     }
 
     private fun isCurrentFirebaseUserOwner(): Boolean {
-        val u = Firebase.auth.currentUser
+        val u = runCatching { Firebase.auth.currentUser }.getOrNull()
         return u != null && u.isEmailVerified && u.email.equals(OFFICIAL_OWNER_EMAIL, ignoreCase = true)
     }
 

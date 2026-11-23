@@ -126,7 +126,7 @@ fun ProfileScreen(
     val isAdminOrOwner = viewModel.isAdminOrOwner()
     val isOwner = viewModel.isVerifiedOwner()
     val hasVip = viewModel.hasActiveVipAccess()
-    val firebaseEmail = Firebase.auth.currentUser?.email.orEmpty()
+    val firebaseEmail = runCatching { Firebase.auth.currentUser?.email }.getOrNull().orEmpty()
     val dateFmt = remember { SimpleDateFormat("dd MMM yyyy", Locale.US) }
 
     var username by remember { mutableStateOf("") }

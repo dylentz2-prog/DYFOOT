@@ -83,11 +83,14 @@ jobs:
               -dname "CN=Android Debug,O=Android,C=US"
           fi
           test -s debug.keystore
+          echo "Debug keystore public certificate fingerprints (register SHA1 in Firebase Console if using newly generated keystore):"
+          keytool -list -v -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android 2>/dev/null | grep -E 'SHA1:|SHA256:' || true
 
       - name: Prepare .env & Firebase config
         env:
           FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
           MOBILE_MONEY_MERCHANT_KEY: ${{ secrets.MOBILE_MONEY_MERCHANT_KEY }}
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
           GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
         run: |
           if [ ! -f .env.example ]; then
@@ -104,11 +107,16 @@ jobs:
             grep -v '^MOBILE_MONEY_MERCHANT_KEY=' .env > .env.tmp && mv .env.tmp .env
             printf 'MOBILE_MONEY_MERCHANT_KEY=%s\n' "$MOBILE_MONEY_MERCHANT_KEY" >> .env
           fi
-          if [ ! -f app/google-services.json ] && [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+          if [ ! -f app/google-services.json ] && [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            printf '%s\n' "$GOOGLE_SERVICES_JSON" > app/google-services.json
+          elif [ ! -f app/google-services.json ] && [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
             printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | tr -d '\r\n' | base64 -d > app/google-services.json
           fi
-          if [ ! -f app/google-services.json ]; then
-            echo "::warning::app/google-services.json is missing in GitHub. Building APK without google-services.json; add GOOGLE_SERVICES_JSON_BASE64 in GitHub Secrets for Firebase & Google Sign-In."
+          if [ -f app/google-services.json ]; then
+            python3 -m json.tool app/google-services.json > /dev/null
+            echo "Verified app/google-services.json is valid JSON."
+          else
+            echo "::warning::app/google-services.json is missing in GitHub. Add app/google-services.json or set GOOGLE_SERVICES_JSON / GOOGLE_SERVICES_JSON_BASE64 secret in GitHub Actions."
           fi
 
       - name: Build Debug APK

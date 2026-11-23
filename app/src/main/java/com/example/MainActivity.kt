@@ -339,7 +339,7 @@ fun FirebaseSetupRequiredScreen(
                                 color = NeonLime
                             )
                             Text(
-                                text = "1. Weka app/google-services.json kwenye GitHub repo au weka Secret ya GOOGLE_SERVICES_JSON_BASE64.",
+                                text = "1. Weka faili la app/google-services.json kwenye GitHub repo au weka Secret ya GOOGLE_SERVICES_JSON / GOOGLE_SERVICES_JSON_BASE64.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = CrispWhite
                             )
