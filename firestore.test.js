@@ -693,5 +693,93 @@ test("Admin-only bilingual local football news enforces admin writes, draft priv
   await assertSucceeds(adminDb.collection("news").doc("news_tz_draft").delete());
 });
 
+test("Advertisements enforce owner/admin publishing, valid placements/URLs, active visibility, and full management", async () => {
+  const adminDb = ownerDb(true);
+  const freeDb = userDb(FREE_UID);
+  const created = pastDate(3000);
+
+  // Non-admin user cannot publish an advertisement
+  await assertFails(
+    freeDb.collection("advertisements").doc("ad_spoof").set({
+      authorId: FREE_UID,
+      title: "Unauthorized Promo",
+      promoText: "Should be denied",
+      imageUrl: "https://firebasestorage.googleapis.com/v0/b/demo/o/banner.webp?alt=media",
+      storagePath: "advertisements/ad_spoof/banner.webp",
+      destinationUrl: "dyfoot://vip",
+      placement: "HOME_TOP",
+      active: true,
+      startEpochMs: 0,
+      endEpochMs: 0,
+      createdAt: created,
+      updatedAt: created,
+    })
+  );
+
+  // Invalid placement or unsafe javascript: destinationUrl is rejected even for owner
+  await assertFails(
+    adminDb.collection("advertisements").doc("ad_bad_dest").set({
+      authorId: OWNER_UID,
+      title: "Bad Link Ad",
+      promoText: "Testing URL validation",
+      imageUrl: "",
+      storagePath: "",
+      destinationUrl: "javascript:alert(1)",
+      placement: "HOME_TOP",
+      active: true,
+      startEpochMs: 0,
+      endEpochMs: 0,
+      createdAt: created,
+      updatedAt: created,
+    })
+  );
+
+  // Owner publishes banner with Firebase Cloud Storage imageUrl & TIPS_BANNER placement
+  await assertSucceeds(
+    adminDb.collection("advertisements").doc("ad_banner_1").set({
+      authorId: OWNER_UID,
+      title: "Weekend VIP Jackpot",
+      promoText: "Get 4-tier VIP access starting at 1,000 TSH.",
+      imageUrl: "https://firebasestorage.googleapis.com/v0/b/gen-lang-client-0684472529.firebasestorage.app/o/advertisements%2Fad_banner_1%2Fbanner.webp?alt=media",
+      storagePath: "advertisements/ad_banner_1/banner.webp",
+      destinationUrl: "dyfoot://vip",
+      placement: "TIPS_BANNER",
+      active: true,
+      startEpochMs: 0,
+      endEpochMs: 0,
+      createdAt: created,
+      updatedAt: created,
+    })
+  );
+
+  // Signed-in user can read active ads via the exact client query filter
+  await assertSucceeds(freeDb.collection("advertisements").where("active", "==", true).get());
+  await assertSucceeds(freeDb.collection("advertisements").doc("ad_banner_1").get());
+
+  // Non-admin user cannot deactivate or delete the banner
+  await assertFails(
+    freeDb.collection("advertisements").doc("ad_banner_1").update({
+      active: false,
+      updatedAt: pastDate(1000),
+    })
+  );
+  await assertFails(freeDb.collection("advertisements").doc("ad_banner_1").delete());
+
+  // Owner edits placement to SPORT_HUB and deactivates banner -> hidden from non-admins
+  await assertSucceeds(
+    adminDb.collection("advertisements").doc("ad_banner_1").update({
+      title: "Updated Sport Hub Promo",
+      placement: "SPORT_HUB",
+      active: false,
+      updatedAt: pastDate(1000),
+    })
+  );
+  await assertFails(freeDb.collection("advertisements").doc("ad_banner_1").get());
+
+  // Owner deletes banner
+  await assertSucceeds(adminDb.collection("advertisements").doc("ad_banner_1").delete());
+});
+
+
 
 

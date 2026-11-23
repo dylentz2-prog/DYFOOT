@@ -342,6 +342,17 @@ data class PodcastEpisode(
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
 
+enum class AdPlacement(val wireValue: String, val titleLabel: String) {
+    HOME_TOP("HOME_TOP", "Home Top Banner"),
+    TIPS_BANNER("TIPS_BANNER", "Tips Banner"),
+    SPORT_HUB("SPORT_HUB", "Sport Hub Banner");
+
+    companion object {
+        fun safeFrom(raw: String?): AdPlacement =
+            entries.firstOrNull { it.wireValue == raw } ?: HOME_TOP
+    }
+}
+
 @Keep
 @IgnoreExtraProperties
 data class Advertisement(
@@ -350,8 +361,9 @@ data class Advertisement(
     val title: String = "",
     val promoText: String = "",
     val imageUrl: String = "",
+    val storagePath: String = "",
     val destinationUrl: String = "",
-    val placement: String = "HOME_TOP",
+    val placement: String = AdPlacement.HOME_TOP.wireValue,
     val active: Boolean = true,
     val startEpochMs: Long = 0L,
     val endEpochMs: Long = 0L,

@@ -80,6 +80,7 @@ import com.example.data.model.supportsEnglish
 import com.example.data.model.supportsSwahili
 import com.example.ui.components.AdBannerCard
 import com.example.ui.components.EmptyStateCard
+import com.example.ui.components.handleAdDestinationClick
 import com.example.ui.components.HotTimetableCard
 import com.example.ui.components.MatchCard
 import com.example.ui.components.MatchCenterBottomSheet
@@ -367,24 +368,46 @@ fun HomeScreen(
             }
         }
 
-        // Sponsored Banners if published
+        // Sponsored Banners if published (HOME_TOP)
         if (topAds.isNotEmpty()) {
-            item {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(topAds, key = { it.id }) { ad ->
-                        AdBannerCard(
-                            ad = ad,
-                            onClick = {
-                                if (ad.destinationUrl == "dyfoot://vip") {
-                                    onNavigateVip()
-                                } else if (ad.destinationUrl.startsWith("http")) {
-                                    runCatching {
-                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ad.destinationUrl)))
-                                    }
-                                }
-                            },
-                            modifier = Modifier.width(320.dp)
-                        )
+            if (topAds.size == 1) {
+                val ad = topAds.first()
+                item(key = "home_ad_${ad.id}") {
+                    AdBannerCard(
+                        ad = ad,
+                        onClick = {
+                            handleAdDestinationClick(
+                                context = context,
+                                destinationUrl = ad.destinationUrl,
+                                onNavigateVip = onNavigateVip,
+                                onNavigateTips = onNavigateTips,
+                                onNavigateSportHub = onNavigateSportHub,
+                                onNavigateLiveScores = onNavigateLiveScores,
+                                onNavigateLiveArena = onNavigateLiveArena
+                            )
+                        }
+                    )
+                }
+            } else {
+                item {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(topAds, key = { it.id }) { ad ->
+                            AdBannerCard(
+                                ad = ad,
+                                onClick = {
+                                    handleAdDestinationClick(
+                                        context = context,
+                                        destinationUrl = ad.destinationUrl,
+                                        onNavigateVip = onNavigateVip,
+                                        onNavigateTips = onNavigateTips,
+                                        onNavigateSportHub = onNavigateSportHub,
+                                        onNavigateLiveScores = onNavigateLiveScores,
+                                        onNavigateLiveArena = onNavigateLiveArena
+                                    )
+                                },
+                                modifier = Modifier.width(320.dp)
+                            )
+                        }
                     }
                 }
             }

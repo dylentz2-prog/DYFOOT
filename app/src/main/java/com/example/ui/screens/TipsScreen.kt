@@ -68,6 +68,7 @@ import com.example.ui.components.AdBannerCard
 import com.example.ui.components.EmptyStateCard
 import com.example.ui.components.SegmentedPillSwitcher
 import com.example.ui.components.TipSlipCard
+import com.example.ui.components.handleAdDestinationClick
 import com.example.ui.theme.CrispWhite
 import com.example.ui.theme.InfoCyan
 import com.example.ui.theme.LiveRed
@@ -90,7 +91,10 @@ import java.util.Locale
 @Composable
 fun TipsScreen(
     viewModel: DyfootViewModel,
-    onUpgradeVipClick: () -> Unit
+    onUpgradeVipClick: () -> Unit,
+    onNavigateSportHub: (Int) -> Unit = {},
+    onNavigateLiveScores: () -> Unit = {},
+    onNavigateLiveArena: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val tipsState by viewModel.publishedTips.collectAsStateWithLifecycle()
@@ -268,8 +272,52 @@ fun TipsScreen(
                         }
 
                         if (tipsBannerAds.isNotEmpty()) {
-                            item {
-                                AdBannerCard(ad = tipsBannerAds.first(), onClick = onUpgradeVipClick)
+                            if (tipsBannerAds.size == 1) {
+                                val ad = tipsBannerAds.first()
+                                item(key = "tips_ad_${ad.id}") {
+                                    AdBannerCard(
+                                        ad = ad,
+                                        onClick = {
+                                            if (ad.destinationUrl.isBlank()) {
+                                                onUpgradeVipClick()
+                                            } else {
+                                                handleAdDestinationClick(
+                                                    context = context,
+                                                    destinationUrl = ad.destinationUrl,
+                                                    onNavigateVip = onUpgradeVipClick,
+                                                    onNavigateSportHub = onNavigateSportHub,
+                                                    onNavigateLiveScores = onNavigateLiveScores,
+                                                    onNavigateLiveArena = onNavigateLiveArena
+                                                )
+                                            }
+                                        }
+                                    )
+                                }
+                            } else {
+                                item {
+                                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        items(tipsBannerAds, key = { it.id }) { ad ->
+                                            AdBannerCard(
+                                                ad = ad,
+                                                onClick = {
+                                                    if (ad.destinationUrl.isBlank()) {
+                                                        onUpgradeVipClick()
+                                                    } else {
+                                                        handleAdDestinationClick(
+                                                            context = context,
+                                                            destinationUrl = ad.destinationUrl,
+                                                            onNavigateVip = onUpgradeVipClick,
+                                                            onNavigateSportHub = onNavigateSportHub,
+                                                            onNavigateLiveScores = onNavigateLiveScores,
+                                                            onNavigateLiveArena = onNavigateLiveArena
+                                                        )
+                                                    }
+                                                },
+                                                modifier = Modifier.width(320.dp)
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
 

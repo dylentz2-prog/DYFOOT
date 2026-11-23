@@ -209,8 +209,10 @@ service cloud.firestore {
       return data.authorId is string && data.authorId.size() >= 1 && data.authorId.size() <= 128 &&
              data.title is string && data.title.size() >= 2 && data.title.size() <= 120 &&
              data.promoText is string && data.promoText.size() >= 1 && data.promoText.size() <= 300 &&
-             (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 1000)) &&
+             (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 2000 && (data.imageUrl == '' || data.imageUrl.matches('^https://.*')))) &&
+             (!('storagePath' in data) || (data.storagePath is string && data.storagePath.size() <= 500)) &&
              data.destinationUrl is string && data.destinationUrl.size() <= 1000 &&
+             (data.destinationUrl == '' || data.destinationUrl.matches('^(dyfoot://|https?://).*')) &&
              data.placement in ['HOME_TOP', 'TIPS_BANNER', 'SPORT_HUB'] &&
              data.active is bool &&
              (!('startEpochMs' in data) || data.startEpochMs is int) &&
@@ -628,12 +630,14 @@ service cloud.firestore {
                        isValidAdvertisement(incoming()) &&
                        incoming().authorId == request.auth.uid &&
                        incoming().keys().hasAll(['authorId', 'title', 'promoText', 'destinationUrl', 'placement', 'active', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['authorId', 'title', 'promoText', 'imageUrl', 'destinationUrl', 'placement', 'active', 'startEpochMs', 'endEpochMs', 'createdAt', 'updatedAt']);
+                       incoming().keys().hasOnly(['authorId', 'title', 'promoText', 'imageUrl', 'storagePath', 'destinationUrl', 'placement', 'active', 'startEpochMs', 'endEpochMs', 'createdAt', 'updatedAt']);
       allow update: if isAdmin() &&
                        isValidId(adId) &&
                        isValidAdvertisement(incoming()) &&
                        incoming().authorId == existing().authorId &&
-                       incoming().createdAt == existing().createdAt;
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().keys().hasAll(['authorId', 'title', 'promoText', 'destinationUrl', 'placement', 'active', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['authorId', 'title', 'promoText', 'imageUrl', 'storagePath', 'destinationUrl', 'placement', 'active', 'startEpochMs', 'endEpochMs', 'createdAt', 'updatedAt']);
       allow delete: if isAdmin() && isValidId(adId);
     }
 

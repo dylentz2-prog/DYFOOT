@@ -10,8 +10,14 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.test.core.app.ApplicationProvider
+import com.example.data.media.BannerImageOptimizer
+import com.example.data.model.AdPlacement
+import com.example.data.model.Advertisement
 import com.example.data.model.AppSettings
 import com.example.data.model.CommunityStatus
 import com.example.data.model.FixtureItem
@@ -40,6 +46,7 @@ import com.example.data.notifications.LiveMatchAlertEngine
 import com.example.data.notifications.MatchReminderScheduler
 import com.example.data.remote.DYFOOT_LIVE_LEAGUES
 import com.example.data.remote.ExternalSportsService
+import com.example.ui.components.AdBannerCard
 import com.example.ui.components.DyfootTopBar
 import com.example.ui.components.LiveMatchVisualizerCard
 import com.example.ui.components.MainTab
@@ -48,9 +55,11 @@ import com.example.ui.components.SquadFormationVisualizerCard
 import com.example.ui.components.TipSlipCard
 import com.example.ui.i18n.AppLanguage
 import com.example.ui.i18n.dyfootStrings
+import com.example.ui.screens.AdminAdsAndAlertsPanel
 import com.example.ui.screens.AdminBilingualNewsPanel
 import com.example.ui.screens.InAppArticleReaderSheet
 import com.example.ui.theme.DyfootTheme
+import com.example.viewmodel.BannerEditorUploadState
 import androidx.credentials.CredentialManager
 import com.example.ui.auth.attemptAutoSignIn
 import com.example.ui.auth.onGoogleSignInClicked
@@ -592,5 +601,183 @@ class DyfootPlatformTest {
         assertFalse(successCalled)
         assertTrue(unauthenticatedCalled)
         assertTrue(errorMessage?.contains("google-services.json") == true)
+    }
+
+    @Test
+    fun `banner image optimizer validates formats, 5MB limit, dimensions, and destination URLs`() {
+        assertEquals("JPEG", BannerImageOptimizer.resolveAllowedImageFormat("image/jpeg", "banner.jpg"))
+        assertEquals("JPG", BannerImageOptimizer.resolveAllowedImageFormat("image/jpg", null))
+        assertEquals("PNG", BannerImageOptimizer.resolveAllowedImageFormat(null, "promo.PNG"))
+        assertEquals("WEBP", BannerImageOptimizer.resolveAllowedImageFormat("image/webp", "ad.webp"))
+        assertNull(BannerImageOptimizer.resolveAllowedImageFormat("image/gif", "anim.gif"))
+        assertNull(BannerImageOptimizer.resolveAllowedImageFormat("application/pdf", "flyer.pdf"))
+
+        assertEquals(
+            "JPEG",
+            BannerImageOptimizer.detectImageFormatFromHeader(byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte()))
+        )
+        assertEquals(
+            "PNG",
+            BannerImageOptimizer.detectImageFormatFromHeader(byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A))
+        )
+        assertEquals(
+            "WEBP",
+            BannerImageOptimizer.detectImageFormatFromHeader("RIFF1234WEBP".toByteArray(Charsets.US_ASCII))
+        )
+        assertNull(BannerImageOptimizer.detectImageFormatFromHeader("GIF89a".toByteArray(Charsets.US_ASCII)))
+
+        assertNull(BannerImageOptimizer.validateFileSize(1_500_000L))
+        assertNull(BannerImageOptimizer.validateFileSize(BannerImageOptimizer.MAX_BANNER_FILE_BYTES))
+        assertTrue(BannerImageOptimizer.validateFileSize(0L)?.contains("empty") == true)
+        assertTrue(
+            BannerImageOptimizer.validateFileSize(BannerImageOptimizer.MAX_BANNER_FILE_BYTES + 1L)
+                ?.contains("5 MB") == true
+        )
+
+        val (w, h) = BannerImageOptimizer.computeTargetDimensions(2880, 1620)
+        assertEquals(1440, w)
+        assertEquals(810, h)
+        assertEquals(800 to 450, BannerImageOptimizer.computeTargetDimensions(800, 450))
+
+        assertEquals("", BannerImageOptimizer.sanitizeBannerDestination("  ").getOrNull())
+        assertEquals("dyfoot://vip", BannerImageOptimizer.sanitizeBannerDestination(" dyfoot://vip ").getOrNull())
+        assertEquals("https://dyfoot.tz/promo", BannerImageOptimizer.sanitizeBannerDestination("https://dyfoot.tz/promo").getOrNull())
+        assertTrue(BannerImageOptimizer.sanitizeBannerDestination("javascript:alert(1)").isFailure)
+        assertTrue(BannerImageOptimizer.sanitizeBannerDestination("file:///etc/passwd").isFailure)
+        assertEquals(AdPlacement.HOME_TOP, AdPlacement.safeFrom("HOME_TOP"))
+        assertEquals(AdPlacement.TIPS_BANNER, AdPlacement.safeFrom("TIPS_BANNER"))
+        assertEquals(AdPlacement.SPORT_HUB, AdPlacement.safeFrom("SPORT_HUB"))
+    }
+
+    @Test
+    fun `admin ads panel denies non-admins and hides upload controls`() {
+        composeRule.setContent {
+            DyfootTheme {
+                AdminAdsAndAlertsPanel(
+                    isAuthorized = false,
+                    ads = emptyList(),
+                    announcements = emptyList(),
+                    uploadState = BannerEditorUploadState(),
+                    onImageUriPicked = { _, _ -> },
+                    onClearUploadFeedback = {},
+                    onPublishOrUpdateBanner = { _, _, _, _, _, _, _, _, _, _, _ -> },
+                    onToggleAdActive = {},
+                    onDeleteAd = {},
+                    onSaveAnnouncement = { _, _ -> },
+                    onDeleteAnnouncement = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("admin_ads_access_denied").assertIsDisplayed()
+        composeRule.onNodeWithTag("ad_choose_image_button").assertDoesNotExist()
+        composeRule.onNodeWithTag("ad_publish_button").assertDoesNotExist()
+    }
+
+    @Test
+    @Config(sdk = [36], qualifiers = "w412dp-h915dp")
+    fun `admin ads panel supports preview, edit, deactivate, and delete actions`() {
+        val sampleAd = Advertisement(
+            id = "ad_test_1",
+            authorId = "owner_uid",
+            title = "Matchday VIP Boost",
+            promoText = "Get all Weekend VIP slips for 1,000 TSH.",
+            imageUrl = "https://firebasestorage.googleapis.com/v0/b/demo/o/banner.webp?alt=media",
+            storagePath = "advertisements/ad_test_1/banner.webp",
+            destinationUrl = "dyfoot://vip",
+            placement = AdPlacement.TIPS_BANNER.wireValue,
+            active = true
+        )
+        var toggledAd: Advertisement? = null
+        var deletedAd: Advertisement? = null
+
+        composeRule.setContent {
+            DyfootTheme {
+                AdminAdsAndAlertsPanel(
+                    isAuthorized = true,
+                    ads = listOf(sampleAd),
+                    announcements = emptyList(),
+                    uploadState = BannerEditorUploadState(),
+                    onImageUriPicked = { _, _ -> },
+                    onClearUploadFeedback = {},
+                    onPublishOrUpdateBanner = { _, _, _, _, _, _, _, _, _, _, _ -> },
+                    onToggleAdActive = { toggledAd = it },
+                    onDeleteAd = { deletedAd = it },
+                    onSaveAnnouncement = { _, _ -> },
+                    onDeleteAnnouncement = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("ad_upload_image_section").assertIsDisplayed()
+        composeRule.onNodeWithTag("ad_choose_image_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("ad_destination_input").assertIsDisplayed()
+        composeRule.onNodeWithTag("ad_placement_HOME_TOP").assertIsDisplayed()
+        composeRule.onNodeWithTag("ad_placement_TIPS_BANNER").assertIsDisplayed()
+        composeRule.onNodeWithTag("ad_placement_SPORT_HUB").assertIsDisplayed()
+
+        // Scroll to Ads Management header & card
+        composeRule.onNodeWithTag("admin_ads_lazy_list").performScrollToIndex(1)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("ads_management_section").assertIsDisplayed()
+
+        composeRule.onNodeWithTag("admin_ads_lazy_list").performScrollToIndex(2)
+        composeRule.waitForIdle()
+
+        // Preview dialog
+        composeRule.onNodeWithTag("ad_preview_btn_ad_test_1").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Live Banner Preview").assertIsDisplayed()
+        composeRule.onNodeWithText("Close").performClick()
+        composeRule.waitForIdle()
+
+        // Deactivate toggle
+        composeRule.onNodeWithTag("ad_toggle_btn_ad_test_1").performClick()
+        composeRule.waitForIdle()
+        assertEquals("ad_test_1", toggledAd?.id)
+
+        // Delete confirmation dialog
+        composeRule.onNodeWithTag("ad_delete_btn_ad_test_1").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Delete Promotional Banner?").assertIsDisplayed()
+        composeRule.onNodeWithText("Delete").performClick()
+        composeRule.waitForIdle()
+        assertEquals("ad_test_1", deletedAd?.id)
+
+        // Edit populates form, scrolls to top, and changes primary CTA text
+        composeRule.onNodeWithTag("ad_edit_btn_ad_test_1").performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("admin_ads_lazy_list").performScrollToIndex(0)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("ad_change_image_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("ad_remove_image_button").assertIsDisplayed()
+        composeRule.onNodeWithText("Save Banner Changes").assertIsDisplayed()
+    }
+
+    @Test
+    fun `ad banner card displays uploaded banner title, copy, and sponsored badge`() {
+        val uploadedAd = Advertisement(
+            id = "ad_sport_hub_1",
+            title = "AFCON Live Promo",
+            promoText = "Follow live commentary & tactical threads in Sport Hub.",
+            imageUrl = "https://firebasestorage.googleapis.com/v0/b/demo/o/afcon.webp?alt=media",
+            destinationUrl = "dyfoot://hub",
+            placement = AdPlacement.SPORT_HUB.wireValue,
+            active = true
+        )
+
+        composeRule.setContent {
+            DyfootTheme {
+                AdBannerCard(ad = uploadedAd, onClick = {})
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("dyfoot_ad_banner_ad_sport_hub_1").assertIsDisplayed()
+        composeRule.onNodeWithText("SPONSORED").assertIsDisplayed()
+        composeRule.onNodeWithText("AFCON Live Promo").assertIsDisplayed()
+        composeRule.onNodeWithText("Follow live commentary & tactical threads in Sport Hub.").assertIsDisplayed()
     }
 }

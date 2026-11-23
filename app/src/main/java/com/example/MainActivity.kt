@@ -507,7 +507,10 @@ fun DyfootAuthenticatedApp(
                     composable(DyfootRoutes.TIPS) {
                         TipsScreen(
                             viewModel = viewModel,
-                            onUpgradeVipClick = { navController.navigate(DyfootRoutes.VIP) }
+                            onUpgradeVipClick = { navController.navigate(DyfootRoutes.VIP) },
+                            onNavigateSportHub = { tab -> navController.navigate(DyfootRoutes.sportHub(tab)) },
+                            onNavigateLiveScores = { navController.navigate(DyfootRoutes.LIVE_SCORES) },
+                            onNavigateLiveArena = { navController.navigate(DyfootRoutes.LIVE_ARENA) }
                         )
                     }
                     composable(DyfootRoutes.WATCH) {
@@ -525,7 +528,11 @@ fun DyfootAuthenticatedApp(
                         val tab = entry.arguments?.getInt("initialTab") ?: 0
                         SportHubScreen(
                             viewModel = viewModel,
-                            initialTab = tab
+                            initialTab = tab,
+                            onNavigateVip = { navController.navigate(DyfootRoutes.VIP) },
+                            onNavigateTips = { navigateToMainTab(DyfootRoutes.TIPS) },
+                            onNavigateLiveScores = { navController.navigate(DyfootRoutes.LIVE_SCORES) },
+                            onNavigateLiveArena = { navController.navigate(DyfootRoutes.LIVE_ARENA) }
                         )
                     }
                     composable(DyfootRoutes.GROUPS) {

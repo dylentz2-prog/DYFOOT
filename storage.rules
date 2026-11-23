@@ -1,0 +1,32 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedOwner() {
+      return isSignedIn() &&
+             request.auth.token.email_verified == true &&
+             request.auth.token.email == 'dyvix02@gmail.com';
+    }
+
+    // DYFOOT promotional banner media stored under advertisements/{adId}/{fileName}
+    // Enforces 5 MB maximum upload size and JPG/JPEG/PNG/WEBP MIME types.
+    // Publish, update, deactivate, and delete actions in Firestore /advertisements
+    // are additionally enforced by isAdmin() in firestore.rules.
+    match /advertisements/{adId}/{fileName} {
+      allow read: if true;
+      allow create, update: if isSignedIn() &&
+                               request.resource != null &&
+                               request.resource.size > 0 &&
+                               request.resource.size <= 5 * 1024 * 1024 &&
+                               request.resource.contentType.matches('image/(jpeg|jpg|png|webp)');
+      allow delete: if isSignedIn() || isVerifiedOwner();
+    }
+  }
+}

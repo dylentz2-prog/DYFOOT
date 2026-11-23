@@ -40,7 +40,11 @@ import com.example.viewmodel.DyfootViewModel
 @Composable
 fun SportHubScreen(
     viewModel: DyfootViewModel,
-    initialTab: Int = 0
+    initialTab: Int = 0,
+    onNavigateVip: () -> Unit = {},
+    onNavigateTips: () -> Unit = {},
+    onNavigateLiveScores: () -> Unit = {},
+    onNavigateLiveArena: () -> Unit = {}
 ) {
     var selectedTab by remember(initialTab) { mutableIntStateOf(initialTab.coerceIn(0, 1)) }
     val isRefreshingNews by viewModel.isRefreshingNews.collectAsStateWithLifecycle()
@@ -105,7 +109,14 @@ fun SportHubScreen(
         }
 
         when (selectedTab) {
-            0 -> NewsFeedTab(viewModel = viewModel)
+            0 -> NewsFeedTab(
+                viewModel = viewModel,
+                onNavigateVip = onNavigateVip,
+                onNavigateTips = onNavigateTips,
+                onNavigateLiveScores = onNavigateLiveScores,
+                onNavigateLiveArena = onNavigateLiveArena,
+                onNavigatePodcasts = { selectedTab = 1 }
+            )
             else -> PodcastsFeedTab(viewModel = viewModel)
         }
     }

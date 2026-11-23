@@ -97,6 +97,7 @@ import com.example.data.model.supportsEnglish
 import com.example.data.model.supportsSwahili
 import com.example.ui.components.AdBannerCard
 import com.example.ui.components.EmptyStateCard
+import com.example.ui.components.handleAdDestinationClick
 import com.example.ui.theme.CrispWhite
 import com.example.ui.theme.LiveRed
 import com.example.ui.theme.MidnightBlack
@@ -116,7 +117,14 @@ import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NewsFeedTab(viewModel: DyfootViewModel) {
+fun NewsFeedTab(
+    viewModel: DyfootViewModel,
+    onNavigateVip: () -> Unit = {},
+    onNavigateTips: () -> Unit = {},
+    onNavigateLiveScores: () -> Unit = {},
+    onNavigateLiveArena: () -> Unit = {},
+    onNavigatePodcasts: () -> Unit = {}
+) {
     val context = LocalContext.current
     val news by viewModel.combinedNews.collectAsStateWithLifecycle()
     val settings by viewModel.appSettings.collectAsStateWithLifecycle()
@@ -424,14 +432,50 @@ fun NewsFeedTab(viewModel: DyfootViewModel) {
         }
 
         if (hubAds.isNotEmpty()) {
-            item {
-                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
-                    AdBannerCard(ad = hubAds.first(), onClick = {
-                        val url = hubAds.first().destinationUrl
-                        if (url.startsWith("http")) {
-                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+            if (hubAds.size == 1) {
+                val ad = hubAds.first()
+                item(key = "hub_ad_${ad.id}") {
+                    Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                        AdBannerCard(
+                            ad = ad,
+                            onClick = {
+                                handleAdDestinationClick(
+                                    context = context,
+                                    destinationUrl = ad.destinationUrl,
+                                    onNavigateVip = onNavigateVip,
+                                    onNavigateTips = onNavigateTips,
+                                    onNavigateSportHub = { tab -> if (tab == 1) onNavigatePodcasts() },
+                                    onNavigateLiveScores = onNavigateLiveScores,
+                                    onNavigateLiveArena = onNavigateLiveArena
+                                )
+                            }
+                        )
+                    }
+                }
+            } else {
+                item {
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(hubAds, key = { it.id }) { ad ->
+                            AdBannerCard(
+                                ad = ad,
+                                onClick = {
+                                    handleAdDestinationClick(
+                                        context = context,
+                                        destinationUrl = ad.destinationUrl,
+                                        onNavigateVip = onNavigateVip,
+                                        onNavigateTips = onNavigateTips,
+                                        onNavigateSportHub = { tab -> if (tab == 1) onNavigatePodcasts() },
+                                        onNavigateLiveScores = onNavigateLiveScores,
+                                        onNavigateLiveArena = onNavigateLiveArena
+                                    )
+                                },
+                                modifier = Modifier.width(320.dp)
+                            )
                         }
-                    })
+                    }
                 }
             }
         }

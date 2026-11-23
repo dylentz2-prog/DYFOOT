@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.spring
@@ -29,6 +30,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Adjust
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
@@ -450,38 +452,124 @@ fun AdBannerCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val hasUploadedBanner = ad.imageUrl.startsWith("https://") || ad.imageUrl.startsWith("http://")
     Card(
         onClick = onClick,
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MidnightCard),
         border = BorderStroke(1.dp, NeonLime.copy(alpha = 0.45f)),
-        modifier = modifier.fillMaxWidth()
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("dyfoot_ad_banner_${ad.id.ifBlank { ad.placement }}")
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    Brush.horizontalGradient(
-                        colors = listOf(MidnightCard, NeonLimeContainer.copy(alpha = 0.65f))
-                    )
-                )
-                .padding(14.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                if (ad.imageUrl.startsWith("http")) {
+        if (hasUploadedBanner) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(152.dp)
+                        .background(MidnightCardAlt)
+                ) {
                     AsyncImage(
                         model = ad.imageUrl,
                         contentDescription = ad.title,
                         modifier = Modifier
-                            .size(56.dp)
-                            .clip(RoundedCornerShape(12.dp)),
+                            .fillMaxWidth()
+                            .height(152.dp),
                         contentScale = ContentScale.Crop
                     )
-                    Spacer(modifier = Modifier.width(12.dp))
-                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(152.dp)
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        MidnightBlack.copy(alpha = 0.12f),
+                                        Color.Transparent,
+                                        MidnightCard.copy(alpha = 0.92f)
+                                    )
+                                )
+                            )
+                    )
+                    Surface(
+                        color = NeonLime,
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(10.dp)
+                    ) {
+                        Text(
+                            text = "SPONSORED",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MidnightBlack,
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                        )
+                    }
+                    if (ad.destinationUrl.isNotBlank()) {
+                        Surface(
+                            color = MidnightBlack.copy(alpha = 0.78f),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, NeonLime.copy(alpha = 0.5f)),
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                contentDescription = "Open promotion",
+                                tint = NeonLime,
+                                modifier = Modifier
+                                    .padding(6.dp)
+                                    .size(14.dp)
+                            )
+                        }
+                    }
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.horizontalGradient(
+                                colors = listOf(MidnightCard, NeonLimeContainer.copy(alpha = 0.45f))
+                            )
+                        )
+                        .padding(horizontal = 14.dp, vertical = 12.dp)
+                ) {
+                    Text(
+                        text = ad.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = CrispWhite,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Text(
+                        text = ad.promoText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SlateText,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        Brush.horizontalGradient(
+                            colors = listOf(MidnightCard, NeonLimeContainer.copy(alpha = 0.65f))
+                        )
+                    )
+                    .padding(14.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Image(
                         painter = painterResource(id = R.drawable.img_vip_crown_banner),
                         contentDescription = ad.title,
@@ -491,38 +579,65 @@ fun AdBannerCard(
                         contentScale = ContentScale.Crop
                     )
                     Spacer(modifier = Modifier.width(12.dp))
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            color = NeonLime,
-                            shape = RoundedCornerShape(4.dp)
-                        ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                color = NeonLime,
+                                shape = RoundedCornerShape(4.dp)
+                            ) {
+                                Text(
+                                    text = "SPONSORED",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MidnightBlack,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "SPONSORED",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MidnightBlack,
-                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                text = ad.title,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = CrispWhite,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = ad.title,
-                            style = MaterialTheme.typography.titleSmall,
-                            color = CrispWhite,
-                            maxLines = 1,
+                            text = ad.promoText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SlateText,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = ad.promoText,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = SlateText,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
                 }
+            }
+        }
+    }
+}
+
+fun handleAdDestinationClick(
+    context: Context,
+    destinationUrl: String,
+    onNavigateVip: () -> Unit = {},
+    onNavigateTips: () -> Unit = {},
+    onNavigateSportHub: (Int) -> Unit = {},
+    onNavigateLiveScores: () -> Unit = {},
+    onNavigateLiveArena: () -> Unit = {}
+) {
+    val clean = destinationUrl.trim()
+    if (clean.isBlank()) return
+    val lower = clean.lowercase()
+    when {
+        lower.startsWith("dyfoot://vip") -> onNavigateVip()
+        lower.startsWith("dyfoot://tips") -> onNavigateTips()
+        lower.startsWith("dyfoot://podcast") -> onNavigateSportHub(1)
+        lower.startsWith("dyfoot://hub") || lower.startsWith("dyfoot://news") -> onNavigateSportHub(0)
+        lower.startsWith("dyfoot://live") || lower.startsWith("dyfoot://scores") -> onNavigateLiveScores()
+        lower.startsWith("dyfoot://arena") -> onNavigateLiveArena()
+        lower.startsWith("https://") || lower.startsWith("http://") -> {
+            runCatching {
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(clean)))
             }
         }
     }

@@ -4,6 +4,9 @@ import android.content.Context
 import com.example.R
 import com.example.data.firebase.OperationType
 import com.example.data.firebase.handleFirestoreError
+import com.example.data.media.BannerImageOptimizer
+import com.example.data.media.BannerImageSelection
+import com.example.data.model.AdPlacement
 import com.example.data.model.AdminAuditLog
 import com.example.data.model.Advertisement
 import com.example.data.model.Announcement
@@ -45,6 +48,9 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.snapshots
+import com.google.firebase.storage.StorageException
+import com.google.firebase.storage.StorageMetadata
+import com.google.firebase.storage.storage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -54,6 +60,11 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
 import java.util.Date
 import java.util.concurrent.TimeUnit
+
+data class UploadedBannerAsset(
+    val downloadUrl: String,
+    val storagePath: String
+)
 
 class DyfootRepository(
     private val db: FirebaseFirestore,
@@ -73,6 +84,17 @@ class DyfootRepository(
         user != null &&
             user.isEmailVerified &&
             user.email.equals(OFFICIAL_OWNER_EMAIL, ignoreCase = true)
+
+    private suspend fun requireAdminAuthorized(): String {
+        val user = auth.currentUser
+            ?: throw IllegalStateException("Please sign in with an authorized DYFOOT owner or admin account.")
+        if (isVerifiedOwner(user)) return user.uid
+        val adminSnap = db.collection("admins").document(user.uid).get().await()
+        if (adminSnap.exists() && adminSnap.getBoolean("active") == true) {
+            return user.uid
+        }
+        throw SecurityException("Only authorized DYFOOT owners or admins can publish or manage advertisements.")
+    }
 
     suspend fun ensureUserProfile(): Result<UserProfile> {
         val currentUser = auth.currentUser
@@ -1415,18 +1437,102 @@ class DyfootRepository(
         Result.failure(e)
     }
 
-    suspend fun saveAdvertisement(ad: Advertisement): Result<Unit> {
-        val uid = auth.currentUser?.uid ?: return Result.failure(IllegalStateException("Not signed in"))
-        val isNew = ad.id.isBlank()
-        val ref = if (isNew) db.collection("advertisements").document() else db.collection("advertisements").document(ad.id)
+    fun newAdvertisementId(): String = db.collection("advertisements").document().id
+
+    suspend fun uploadBannerImage(
+        adId: String,
+        image: BannerImageSelection,
+        onProgress: (Float) -> Unit = {}
+    ): Result<UploadedBannerAsset> {
         return try {
+            requireAdminAuthorized()
+            val cleanAdId = adId.replace(Regex("[^a-zA-Z0-9_-]"), "").take(128)
+            require(cleanAdId.isNotBlank()) { "Invalid advertisement ID for image upload." }
+            require(image.optimizedBytes.isNotEmpty() && image.optimizedBytes.size.toLong() <= BannerImageOptimizer.MAX_BANNER_FILE_BYTES) {
+                "Banner image exceeds the 5 MB upload limit."
+            }
+
+            val storagePath = "advertisements/$cleanAdId/banner_${System.currentTimeMillis()}.${image.optimizedExtension}"
+            val storageRef = Firebase.storage.reference.child(storagePath)
+            val metadata = StorageMetadata.Builder()
+                .setContentType(image.optimizedMimeType)
+                .setCacheControl("public,max-age=86400")
+                .build()
+
+            val uploadTask = storageRef.putBytes(image.optimizedBytes, metadata)
+            uploadTask.addOnProgressListener { snapshot ->
+                val total = snapshot.totalByteCount
+                if (total > 0L) {
+                    val ratio = (snapshot.bytesTransferred.toFloat() / total.toFloat()).coerceIn(0f, 0.98f)
+                    onProgress(ratio)
+                }
+            }
+            uploadTask.await()
+            val downloadUrl = storageRef.downloadUrl.await().toString()
+            onProgress(1f)
+            Result.success(UploadedBannerAsset(downloadUrl = downloadUrl, storagePath = storagePath))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: StorageException) {
+            val friendly = when (e.errorCode) {
+                StorageException.ERROR_BUCKET_NOT_FOUND,
+                StorageException.ERROR_PROJECT_NOT_FOUND ->
+                    "Firebase Cloud Storage is not enabled for this project yet. Open Firebase Console → Storage → Get Started."
+                StorageException.ERROR_NOT_AUTHORIZED,
+                StorageException.ERROR_NOT_AUTHENTICATED ->
+                    "Cloud Storage denied permission. Verify signed-in owner account and Storage security rules."
+                StorageException.ERROR_QUOTA_EXCEEDED ->
+                    "Firebase Cloud Storage quota exceeded."
+                else -> e.localizedMessage ?: "Cloud Storage upload failed."
+            }
+            Result.failure(IllegalStateException(friendly, e))
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deleteBannerImageAsset(storagePath: String): Result<Unit> {
+        val cleanPath = storagePath.trim()
+        if (cleanPath.isBlank()) return Result.success(Unit)
+        return try {
+            requireAdminAuthorized()
+            Firebase.storage.reference.child(cleanPath).delete().await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            Result.success(Unit)
+        }
+    }
+
+    suspend fun saveAdvertisement(ad: Advertisement, isNewOverride: Boolean? = null): Result<String> {
+        return try {
+            val uid = requireAdminAuthorized()
+            val cleanTitle = ad.title.trim().take(120)
+            val cleanPromo = ad.promoText.trim().take(300)
+            require(cleanTitle.length >= 2) { "Banner title must be at least 2 characters." }
+            require(cleanPromo.isNotEmpty()) { "Promo copy cannot be empty." }
+
+            val cleanDest = BannerImageOptimizer.sanitizeBannerDestination(ad.destinationUrl).getOrThrow()
+            val cleanPlacement = AdPlacement.safeFrom(ad.placement).wireValue
+            val cleanImageUrl = ad.imageUrl.trim().take(2000)
+            val cleanStoragePath = ad.storagePath.trim().take(500)
+
+            val isNew = isNewOverride ?: ad.id.isBlank()
+            val ref = if (ad.id.isBlank()) {
+                db.collection("advertisements").document()
+            } else {
+                db.collection("advertisements").document(ad.id)
+            }
+
             val payload = mutableMapOf<String, Any>(
                 "authorId" to (ad.authorId.ifBlank { uid }),
-                "title" to ad.title.trim().take(120),
-                "promoText" to ad.promoText.trim().take(300),
-                "imageUrl" to ad.imageUrl.trim().take(1000),
-                "destinationUrl" to ad.destinationUrl.trim().take(1000),
-                "placement" to ad.placement,
+                "title" to cleanTitle,
+                "promoText" to cleanPromo,
+                "imageUrl" to cleanImageUrl,
+                "storagePath" to cleanStoragePath,
+                "destinationUrl" to cleanDest,
+                "placement" to cleanPlacement,
                 "active" to ad.active,
                 "startEpochMs" to ad.startEpochMs,
                 "endEpochMs" to ad.endEpochMs,
@@ -1438,19 +1544,23 @@ class DyfootRepository(
             } else {
                 ref.update(payload).await()
             }
-            writeAuditLog("SAVE_AD", "advertisement", ref.id, "${ad.title} active=${ad.active}")
-            Result.success(Unit)
+            writeAuditLog("SAVE_AD", "advertisement", ref.id, "$cleanTitle [$cleanPlacement] active=${ad.active}")
+            Result.success(ref.id)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            handleFirestoreError(e, OperationType.WRITE, ref.path)
+            val path = if (ad.id.isBlank()) "advertisements" else "advertisements/${ad.id}"
+            handleFirestoreError(e, OperationType.WRITE, path)
             Result.failure(e)
         }
     }
 
-    suspend fun deleteAdvertisement(adId: String): Result<Unit> = try {
-        requireUserId()
+    suspend fun deleteAdvertisement(adId: String, storagePath: String = ""): Result<Unit> = try {
+        requireAdminAuthorized()
         db.collection("advertisements").document(adId).delete().await()
+        if (storagePath.isNotBlank()) {
+            deleteBannerImageAsset(storagePath)
+        }
         writeAuditLog("DELETE_AD", "advertisement", adId, "Deleted ad")
         Result.success(Unit)
     } catch (e: CancellationException) {

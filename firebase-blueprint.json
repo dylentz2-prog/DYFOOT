@@ -218,6 +218,7 @@
         "title": { "type": "string" },
         "promoText": { "type": "string" },
         "imageUrl": { "type": "string" },
+        "storagePath": { "type": "string" },
         "destinationUrl": { "type": "string" },
         "placement": { "type": "string", "enum": ["HOME_TOP", "TIPS_BANNER", "SPORT_HUB"] },
         "active": { "type": "boolean" },

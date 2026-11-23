@@ -1,10 +1,14 @@
 package com.example.viewmodel
 
 import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.firebase.unwrapFirestoreMessage
 import com.example.data.local.UserPreferencesDataStore
+import com.example.data.media.BannerImageOptimizer
+import com.example.data.media.BannerImageSelection
+import com.example.data.model.AdPlacement
 import com.example.data.model.AdminAuditLog
 import com.example.data.model.Advertisement
 import com.example.data.model.Announcement
@@ -83,6 +87,17 @@ data class PendingVipPushState(
     val ussdCode: String
 )
 
+data class BannerEditorUploadState(
+    val isOptimizing: Boolean = false,
+    val isUploading: Boolean = false,
+    val progress: Float = 0f,
+    val statusMessage: String? = null,
+    val errorMessage: String? = null,
+    val successMessage: String? = null
+) {
+    val isBusy: Boolean get() = isOptimizing || isUploading
+}
+
 class DyfootViewModel(
     private val repository: DyfootRepository,
     private val sportsService: ExternalSportsService,
@@ -101,6 +116,9 @@ class DyfootViewModel(
 
     private val _pendingVipPush = MutableStateFlow<PendingVipPushState?>(null)
     val pendingVipPush: StateFlow<PendingVipPushState?> = _pendingVipPush.asStateFlow()
+
+    private val _bannerUploadState = MutableStateFlow(BannerEditorUploadState())
+    val bannerUploadState: StateFlow<BannerEditorUploadState> = _bannerUploadState.asStateFlow()
 
     private var previousVipActive: Boolean? = null
     private var previousFixtureSnapshots: Map<String, FixtureItem> = emptyMap()
@@ -1075,6 +1093,162 @@ class DyfootViewModel(
         }
     }
 
+    fun clearBannerUploadFeedback() {
+        _bannerUploadState.value = BannerEditorUploadState()
+    }
+
+    fun selectAndOptimizeBannerImage(
+        context: Context,
+        uri: Uri,
+        onReady: (BannerImageSelection) -> Unit
+    ) {
+        if (!isAdminOrOwner()) {
+            _bannerUploadState.value = BannerEditorUploadState(
+                errorMessage = "Only authorized DYFOOT owners or admins can upload advertisement banners."
+            )
+            return
+        }
+        viewModelScope.launch {
+            _bannerUploadState.value = BannerEditorUploadState(
+                isOptimizing = true,
+                statusMessage = "Validating and optimizing banner image..."
+            )
+            BannerImageOptimizer.inspectAndOptimize(context, uri)
+                .onSuccess { selection ->
+                    _bannerUploadState.value = BannerEditorUploadState(
+                        statusMessage = "Optimized ${selection.formatLabel} (${BannerImageOptimizer.formatReadableSize(selection.optimizedSizeBytes)}) ready for upload."
+                    )
+                    onReady(selection)
+                }
+                .onFailure { err ->
+                    val message = err.localizedMessage ?: "Could not process selected image."
+                    _bannerUploadState.value = BannerEditorUploadState(errorMessage = message)
+                    _toastEvents.tryEmit(message)
+                }
+        }
+    }
+
+    fun publishOrUpdateBannerAd(
+        existingAd: Advertisement?,
+        title: String,
+        promoText: String,
+        destinationUrl: String,
+        placement: String,
+        active: Boolean,
+        pendingImage: BannerImageSelection?,
+        keepExistingImageUrl: String,
+        keepExistingStoragePath: String,
+        previousStoragePathToCleanup: String?,
+        onDone: () -> Unit = {}
+    ) {
+        if (!isAdminOrOwner()) {
+            val msg = "Only authorized DYFOOT owners or admins can publish advertisements."
+            _bannerUploadState.value = BannerEditorUploadState(errorMessage = msg)
+            _toastEvents.tryEmit(msg)
+            return
+        }
+        val cleanTitle = title.trim()
+        val cleanPromo = promoText.trim()
+        if (cleanTitle.length < 2) {
+            _bannerUploadState.value = BannerEditorUploadState(errorMessage = "Banner title must be at least 2 characters.")
+            return
+        }
+        if (cleanPromo.isBlank()) {
+            _bannerUploadState.value = BannerEditorUploadState(errorMessage = "Promo copy is required.")
+            return
+        }
+        val destResult = BannerImageOptimizer.sanitizeBannerDestination(destinationUrl)
+        val cleanDest = destResult.getOrElse { err ->
+            _bannerUploadState.value = BannerEditorUploadState(errorMessage = err.localizedMessage ?: "Invalid destination URL.")
+            return
+        }
+        val validPlacement = AdPlacement.safeFrom(placement).wireValue
+
+        viewModelScope.launch {
+            val isNew = existingAd == null || existingAd.id.isBlank()
+            val targetAdId = if (isNew) repository.newAdvertisementId() else existingAd!!.id
+
+            var finalImageUrl = keepExistingImageUrl.trim()
+            var finalStoragePath = keepExistingStoragePath.trim()
+
+            if (pendingImage != null) {
+                _bannerUploadState.value = BannerEditorUploadState(
+                    isUploading = true,
+                    progress = 0.05f,
+                    statusMessage = "Uploading banner image to Firebase Cloud Storage..."
+                )
+                val uploadResult = repository.uploadBannerImage(targetAdId, pendingImage) { pct ->
+                    _bannerUploadState.value = _bannerUploadState.value.copy(
+                        isUploading = true,
+                        progress = pct.coerceIn(0.05f, 0.98f),
+                        statusMessage = "Uploading banner (${(pct * 100).toInt()}%)..."
+                    )
+                }
+                val asset = uploadResult.getOrElse { err ->
+                    val msg = err.localizedMessage ?: "Failed to upload banner image to cloud storage."
+                    _bannerUploadState.value = BannerEditorUploadState(errorMessage = msg)
+                    _toastEvents.tryEmit(msg)
+                    return@launch
+                }
+                finalImageUrl = asset.downloadUrl
+                finalStoragePath = asset.storagePath
+            }
+
+            _bannerUploadState.value = _bannerUploadState.value.copy(
+                isUploading = true,
+                progress = 1f,
+                statusMessage = "Saving banner campaign..."
+            )
+
+            val payload = (existingAd ?: Advertisement()).copy(
+                id = targetAdId,
+                authorId = existingAd?.authorId?.ifBlank { currentUserId } ?: currentUserId,
+                title = cleanTitle,
+                promoText = cleanPromo,
+                imageUrl = finalImageUrl,
+                storagePath = finalStoragePath,
+                destinationUrl = cleanDest,
+                placement = validPlacement,
+                active = active
+            )
+
+            repository.saveAdvertisement(payload, isNewOverride = isNew)
+                .onSuccess {
+                    if (!previousStoragePathToCleanup.isNullOrBlank() && previousStoragePathToCleanup != finalStoragePath) {
+                        repository.deleteBannerImageAsset(previousStoragePathToCleanup)
+                    }
+                    val successText = if (isNew) {
+                        "Banner published to $validPlacement!"
+                    } else {
+                        "Banner updated successfully!"
+                    }
+                    _bannerUploadState.value = BannerEditorUploadState(successMessage = successText)
+                    _toastEvents.tryEmit(successText)
+                    onDone()
+                }
+                .onFailure { err ->
+                    val msg = err.localizedMessage ?: "Failed to save banner campaign."
+                    _bannerUploadState.value = BannerEditorUploadState(errorMessage = msg)
+                    _toastEvents.tryEmit(msg)
+                }
+        }
+    }
+
+    fun toggleAdvertisementActive(ad: Advertisement) {
+        if (!isAdminOrOwner()) {
+            _toastEvents.tryEmit("Only authorized owners/admins can manage advertisements.")
+            return
+        }
+        viewModelScope.launch {
+            val nextActive = !ad.active
+            repository.saveAdvertisement(ad.copy(active = nextActive), isNewOverride = false)
+                .onSuccess {
+                    _toastEvents.tryEmit(if (nextActive) "Banner activated" else "Banner deactivated")
+                }
+                .onFailure { _toastEvents.tryEmit(it.localizedMessage ?: "Failed to update banner status") }
+        }
+    }
+
     fun saveAdvertisement(ad: Advertisement, onDone: () -> Unit = {}) {
         viewModelScope.launch {
             repository.saveAdvertisement(ad)
@@ -1086,9 +1260,23 @@ class DyfootViewModel(
         }
     }
 
+    fun deleteAdvertisement(ad: Advertisement) {
+        if (!isAdminOrOwner()) {
+            _toastEvents.tryEmit("Only authorized owners/admins can delete advertisements.")
+            return
+        }
+        viewModelScope.launch {
+            repository.deleteAdvertisement(ad.id, ad.storagePath)
+                .onSuccess { _toastEvents.tryEmit("Banner deleted") }
+                .onFailure { _toastEvents.tryEmit(it.localizedMessage ?: "Failed to delete banner") }
+        }
+    }
+
     fun deleteAdvertisement(adId: String) {
         viewModelScope.launch {
-            repository.deleteAdvertisement(adId).onSuccess { _toastEvents.tryEmit("Ad removed") }
+            repository.deleteAdvertisement(adId)
+                .onSuccess { _toastEvents.tryEmit("Ad removed") }
+                .onFailure { _toastEvents.tryEmit(it.localizedMessage ?: "Failed to remove ad") }
         }
     }
 
