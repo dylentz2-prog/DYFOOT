@@ -47,6 +47,7 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.Source
 import com.google.firebase.firestore.snapshots
 import com.google.firebase.storage.StorageException
 import com.google.firebase.storage.StorageMetadata
@@ -1840,10 +1841,13 @@ class DyfootRepository(
                 "merchantNumber" to settings.merchantNumber.ifBlank { OFFICIAL_MERCHANT_NUMBER },
                 "merchantName" to settings.merchantName.ifBlank { OFFICIAL_MERCHANT_NAME },
                 "categories" to settings.categories.take(20),
+                "liveUpdateBanner" to settings.liveUpdateBanner.trim().take(500),
+                "liveSyncIntervalSec" to settings.liveSyncIntervalSec.coerceIn(15L, 300L),
+                "configVersion" to settings.configVersion.coerceAtLeast(1L),
                 "updatedAt" to FieldValue.serverTimestamp()
             )
         ).await()
-        writeAuditLog("UPDATE_SETTINGS", "app_settings", "platform", "Updated pricing/categories")
+        writeAuditLog("UPDATE_SETTINGS", "app_settings", "platform", "Updated pricing, categories & live platform config")
         Result.success(Unit)
     } catch (e: CancellationException) {
         throw e
@@ -1853,135 +1857,26 @@ class DyfootRepository(
     }
 
     /**
-     * Owner-only optional starter sample pack so the owner can test/seed a fresh Firestore DB
-     * with clearly labeled [SAMPLE] items without fabricating live production data.
+     * Pull-to-refresh server sync: forces Firestore listeners & local cache to reconcile directly
+     * with live server documents so owner-pushed updates reflect immediately without an APK update.
      */
-    suspend fun seedStarterSampleContent(): Result<Unit> {
-        val uid = auth.currentUser?.uid ?: return Result.failure(IllegalStateException("Not signed in"))
-        return try {
-            saveTip(
-                TipItem(
-                    authorId = uid,
-                    matchName = "[SAMPLE] Arsenal vs Liverpool",
-                    homeTeam = "Arsenal",
-                    awayTeam = "Liverpool",
-                    competition = "Premier League",
-                    kickoffLabel = "Sat 17:30 EAT",
-                    kickoffEpochMs = System.currentTimeMillis() + 3600_000L,
-                    tier = TipTier.FREE.name,
-                    market = "Over/Under 2.5 Goals",
-                    selection = "Over 2.5 Goals",
-                    odds = "1.78",
-                    bookmakerName = "SportPesa",
-                    bookmakerCode = "SP-SAMPLE-11",
-                    predictedScore = "2-2",
-                    analysis = "[SAMPLE] Both sides average 2.1 xG per match in recent home/away fixtures.",
-                    riskLevel = "LOW",
-                    status = "PENDING",
-                    published = true,
-                    featured = true
-                )
-            )
-            saveTip(
-                TipItem(
-                    authorId = uid,
-                    matchName = "[SAMPLE] Simba SC vs Young Africans",
-                    homeTeam = "Simba SC",
-                    awayTeam = "Young Africans",
-                    competition = "NBC Premier League",
-                    kickoffLabel = "Sun 16:00 EAT",
-                    kickoffEpochMs = System.currentTimeMillis() + 7200_000L,
-                    tier = TipTier.VIP.name,
-                    market = "Asian Handicap & BTTS",
-                    selection = "BTTS Yes & Over 1.5",
-                    odds = "2.25",
-                    bookmakerName = "BetPawa TZ",
-                    bookmakerCode = "BP-VIP-8841",
-                    predictedScore = "2-1",
-                    analysis = "[SAMPLE VIP] Tactical breakdown of Dar derby midfield transitions and set-piece threats.",
-                    riskLevel = "MEDIUM",
-                    status = "PENDING",
-                    published = true,
-                    featured = true
-                )
-            )
-            saveFixture(
-                FixtureItem(
-                    authorId = uid,
-                    homeTeam = "[SAMPLE] Young Africans",
-                    awayTeam = "Azam FC",
-                    competition = "NBC Premier League",
-                    homeScore = 1,
-                    awayScore = 1,
-                    status = "UPCOMING",
-                    minuteLabel = "16:00 EAT",
-                    kickoffEpochMs = System.currentTimeMillis() + 5400_000L,
-                    venue = "Benjamin Mkapa Stadium",
-                    sourceLabel = "DYFOOT Sample Schedule",
-                    streamScheduled = true,
-                    streamStatus = "COMING_SOON",
-                    eventsSummary = "[SAMPLE] Pre-match lineups posted 60 mins before kickoff.",
-                    published = true
-                )
-            )
-            saveAdvertisement(
-                Advertisement(
-                    authorId = uid,
-                    title = "DYFOOT VIP Tanzania Pass",
-                    promoText = "Unlock protected VIP slips via M-Pesa, Tigo Pesa & Airtel Money (0706499813).",
-                    destinationUrl = "dyfoot://vip",
-                    placement = "HOME_TOP",
-                    active = true
-                )
-            )
-            saveAnnouncement(
-                Announcement(
-                    authorId = uid,
-                    title = "Welcome to DYFOOT V2",
-                    message = "Official DYFOOT Sports Platform is live. Check Sport Hub for live RSS news, Watch highlights & Podcasts.",
-                    priority = "URGENT",
-                    published = true
-                )
-            )
-            saveVideo(
-                VideoItem(
-                    authorId = uid,
-                    title = "[SAMPLE] Matchday Tactical Breakdown",
-                    caption = "How high-pressing traps decide big European & African fixtures. #DYFOOT #Tactics",
-                    creatorName = "DYFOOT Studio",
-                    category = "Tactics",
-                    videoUrl = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-                    durationSec = 15L,
-                    published = true
-                )
-            )
-            savePodcast(
-                PodcastEpisode(
-                    authorId = uid,
-                    title = "[SAMPLE] East Africa & Europe Weekend Preview",
-                    showName = "DYFOOT Pitchside Podcast",
-                    hostName = "DYFOOT Editorial Desk",
-                    description = "Sample audio episode demonstrating Media3 playback, seek controls, and episode tracking.",
-                    category = "Match Talk",
-                    audioUrl = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
-                    durationSec = 372L,
-                    published = true
-                )
-            )
-            val currentProfile = db.collection("users").document(uid).get().await()
-                .toObject(UserProfile::class.java) ?: UserProfile(userId = uid, displayName = "Owner")
-            createCommunityGroup(
-                currentUser = currentProfile,
-                title = "DYFOOT Global Matchday Lounge",
-                description = "Public football discussion room for match reactions & lineups.",
-                publicRoom = true
-            )
-            writeAuditLog("SEED_SAMPLE_DATA", "platform", "sample_pack", "Seeded clearly labeled [SAMPLE] content")
-            Result.success(Unit)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Result.failure(e)
+    suspend fun syncPlatformDocsFromServer() {
+        auth.currentUser?.uid ?: return
+        val fetches = listOf(
+            suspend { db.collection("app_settings").document("platform").get(Source.SERVER).await(); Unit },
+            suspend { db.collection("announcements").whereEqualTo("published", true).get(Source.SERVER).await(); Unit },
+            suspend { db.collection("advertisements").whereEqualTo("active", true).get(Source.SERVER).await(); Unit },
+            suspend { db.collection("tips").whereEqualTo("published", true).get(Source.SERVER).await(); Unit },
+            suspend { db.collection("news").whereEqualTo("published", true).get(Source.SERVER).await(); Unit }
+        )
+        for (task in fetches) {
+            try {
+                task()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Best-effort refresh; active snapshot listeners keep cached data intact if offline.
+            }
         }
     }
 

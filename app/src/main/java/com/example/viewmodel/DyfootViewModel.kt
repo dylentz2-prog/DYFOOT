@@ -51,6 +51,9 @@ import com.example.ui.i18n.AppLanguage
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -61,6 +64,8 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -165,16 +170,19 @@ class DyfootViewModel(
         repository.observePublishedNews(currentUserId)
             .toUiStateFlow("Failed to load news")
 
-    private val _rssNews = MutableStateFlow<List<NewsArticle>>(sportsService.getInitialInAppNews())
+    private val _rssNews = MutableStateFlow<List<NewsArticle>>(emptyList())
     val rssNews: StateFlow<List<NewsArticle>> = _rssNews.asStateFlow()
 
     private val _isRefreshingNews = MutableStateFlow(false)
     val isRefreshingNews: StateFlow<Boolean> = _isRefreshingNews.asStateFlow()
 
+    private val _isPullRefreshing = MutableStateFlow(false)
+    val isPullRefreshing: StateFlow<Boolean> = _isPullRefreshing.asStateFlow()
+
     val combinedNews: StateFlow<List<NewsArticle>> = combine(publishedNews, _rssNews) { fsState, rss ->
         val firestoreArticles = (fsState as? UiState.Success)?.data.orEmpty()
         (firestoreArticles + rss).distinctBy { it.title.lowercase() }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), sportsService.getInitialInAppNews())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
     val publishedVideos: StateFlow<UiState<List<VideoItem>>> =
         repository.observePublishedVideos(currentUserId)
@@ -224,6 +232,7 @@ class DyfootViewModel(
     val standings: StateFlow<List<StandingRow>> = _standings.asStateFlow()
     private val _standingsStatus = MutableStateFlow<String?>(null)
     val standingsStatus: StateFlow<String?> = _standingsStatus.asStateFlow()
+    private var currentStandingsLeague = "PL"
 
     val appLanguage: StateFlow<AppLanguage> =
         prefs.appLanguage.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), AppLanguage.ENGLISH)
@@ -437,9 +446,26 @@ class DyfootViewModel(
         syncLiveFootballScores()
         loadStandings("PL")
         viewModelScope.launch {
+            var cycle = 0
             while (isActive) {
-                delay(45_000L)
-                syncLiveFootballScores(_liveLeagueFilter.value, _liveDateOffset.value)
+                val intervalMs = appSettings.value.liveSyncIntervalSec.coerceIn(15L, 300L) * 1000L
+                delay(intervalMs)
+                cycle++
+                syncLiveFootballScoresInternal(_liveLeagueFilter.value, _liveDateOffset.value)
+                if (cycle % 4 == 0) {
+                    refreshRssNewsInternal()
+                }
+            }
+        }
+        viewModelScope.launch {
+            appSettings.map { it.configVersion }.distinctUntilChanged().drop(1).collect {
+                syncLiveFootballScoresInternal(_liveLeagueFilter.value, _liveDateOffset.value)
+                refreshRssNewsInternal()
+                val isSw = appLanguage.value == AppLanguage.SWAHILI
+                _toastEvents.tryEmit(
+                    if (isSw) "App imejisasisha moja kwa moja na taarifa mpya!"
+                    else "DYFOOT updated live directly without an APK download!"
+                )
             }
         }
 
@@ -584,9 +610,40 @@ class DyfootViewModel(
 
     fun refreshRssNews() {
         viewModelScope.launch {
-            _isRefreshingNews.value = true
+            refreshRssNewsInternal()
+        }
+    }
+
+    private suspend fun refreshRssNewsInternal() {
+        _isRefreshingNews.value = true
+        try {
             _rssNews.value = sportsService.fetchPermittedSportsRssNews()
+        } finally {
             _isRefreshingNews.value = false
+        }
+    }
+
+    fun refreshAllLiveContent() {
+        if (_isPullRefreshing.value) return
+        viewModelScope.launch {
+            _isPullRefreshing.value = true
+            try {
+                coroutineScope {
+                    awaitAll(
+                        async { syncLiveFootballScoresInternal(_liveLeagueFilter.value, _liveDateOffset.value) },
+                        async { refreshRssNewsInternal() },
+                        async { loadStandingsInternal(currentStandingsLeague) },
+                        async { repository.syncPlatformDocsFromServer() }
+                    )
+                }
+                val isSw = appLanguage.value == AppLanguage.SWAHILI
+                _toastEvents.tryEmit(
+                    if (isSw) "Imesasishwa moja kwa moja (${liveFeedUpdatedAt.value ?: "Live"})"
+                    else "Live data & updates synced (${liveFeedUpdatedAt.value ?: "Live"})"
+                )
+            } finally {
+                _isPullRefreshing.value = false
+            }
         }
     }
 
@@ -597,7 +654,16 @@ class DyfootViewModel(
         _liveLeagueFilter.value = leagueCode
         _liveDateOffset.value = dateOffsetDays
         viewModelScope.launch {
-            _isSyncingLiveScores.value = true
+            syncLiveFootballScoresInternal(leagueCode, dateOffsetDays)
+        }
+    }
+
+    private suspend fun syncLiveFootballScoresInternal(
+        leagueCode: String,
+        dateOffsetDays: Int
+    ) {
+        _isSyncingLiveScores.value = true
+        try {
             when (val res = sportsService.fetchLiveMatches(leagueCode, dateOffsetDays)) {
                 is LiveApiResult.Success -> {
                     val favIds = favoriteFixtures.value
@@ -634,30 +700,38 @@ class DyfootViewModel(
                     _liveFeedStatus.value = res.message
                 }
             }
+        } finally {
             _isSyncingLiveScores.value = false
         }
     }
 
     fun loadStandings(competitionCode: String) {
+        currentStandingsLeague = competitionCode
         viewModelScope.launch {
-            when (val res = sportsService.fetchStandings(competitionCode)) {
-                is LiveApiResult.Success -> {
-                    _standings.value = res.data
-                    _standingsStatus.value = "${res.sourceName} • Updated ${res.updatedAtLabel}"
-                }
-                is LiveApiResult.MissingApiKey -> {
-                    _standings.value = emptyList()
-                    _standingsStatus.value = res.message
-                }
-                is LiveApiResult.Error -> {
-                    _standingsStatus.value = res.message
-                }
+            loadStandingsInternal(competitionCode)
+        }
+    }
+
+    private suspend fun loadStandingsInternal(competitionCode: String) {
+        when (val res = sportsService.fetchStandings(competitionCode)) {
+            is LiveApiResult.Success -> {
+                _standings.value = res.data
+                _standingsStatus.value = "${res.sourceName} • Updated ${res.updatedAtLabel}"
+            }
+            is LiveApiResult.MissingApiKey -> {
+                _standings.value = emptyList()
+                _standingsStatus.value = res.message
+            }
+            is LiveApiResult.Error -> {
+                _standingsStatus.value = res.message
             }
         }
     }
 
     fun hasMobileMoneyGatewayKey(): Boolean = sportsService.hasMobileMoneyGatewayKey()
     fun hasFootballDataApiKey(): Boolean = sportsService.hasFootballDataApiKey()
+    fun hasDataSportsApiKey(): Boolean = sportsService.hasDataSportsApiKey()
+    fun hasLiveFootballApiKey(): Boolean = sportsService.hasLiveFootballApiKey()
 
     fun setAppLanguage(language: AppLanguage) {
         viewModelScope.launch {
@@ -682,8 +756,8 @@ class DyfootViewModel(
             val updatedFavs = prefs.matchReminders.first()
             val lang = appLanguage.value
             val isSw = lang == AppLanguage.SWAHILI
-            val home = fixture.homeTeam.replace("[SAMPLE]", "").trim()
-            val away = fixture.awayTeam.replace("[SAMPLE]", "").trim()
+            val home = fixture.homeTeam.trim()
+            val away = fixture.awayTeam.trim()
 
             // Sync Firebase Cloud Messaging per-match topic + Firestore device token
             DyfootFcmManager.updateMatchFavoriteSubscription(
@@ -729,8 +803,8 @@ class DyfootViewModel(
         viewModelScope.launch {
             val enabled = prefs.toggleKickoffAlarm(fixture.id)
             val isSw = appLanguage.value == AppLanguage.SWAHILI
-            val home = fixture.homeTeam.replace("[SAMPLE]", "").trim()
-            val away = fixture.awayTeam.replace("[SAMPLE]", "").trim()
+            val home = fixture.homeTeam.trim()
+            val away = fixture.awayTeam.trim()
             if (enabled) {
                 applicationContext?.let {
                     MatchReminderScheduler.scheduleReminder(
@@ -1342,16 +1416,8 @@ class DyfootViewModel(
     fun saveAppSettings(settings: AppSettings) {
         viewModelScope.launch {
             repository.saveAppSettings(settings)
-                .onSuccess { _toastEvents.tryEmit("Platform settings updated") }
+                .onSuccess { _toastEvents.tryEmit("Live platform settings & over-the-air config updated") }
                 .onFailure { _toastEvents.tryEmit(it.localizedMessage ?: "Settings save failed") }
-        }
-    }
-
-    fun seedStarterSampleContent() {
-        viewModelScope.launch {
-            repository.seedStarterSampleContent()
-                .onSuccess { _toastEvents.tryEmit("Sample starter pack added to Firestore") }
-                .onFailure { _toastEvents.tryEmit(it.localizedMessage ?: "Seed failed") }
         }
     }
 }

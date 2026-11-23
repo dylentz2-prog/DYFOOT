@@ -462,7 +462,18 @@ test("App settings 4-tier TSH pricing and ROCK DAILY package payment flow", asyn
       merchantNumber: "0706499813",
       merchantName: "DYFOOT Tanzania",
       categories: ["PREMIER_LEAGUE", "NBC_PREMIER_LEAGUE"],
+      liveUpdateBanner: "Live DataSportsAPI & Live Football API active.",
+      liveSyncIntervalSec: 30,
+      configVersion: 2,
       updatedAt: created,
+    })
+  );
+
+  // Invalid liveSyncIntervalSec (< 15s) rejected even for owner
+  await assertFails(
+    adminDb.collection("app_settings").doc("platform").update({
+      liveSyncIntervalSec: 5,
+      updatedAt: pastDate(1000),
     })
   );
 

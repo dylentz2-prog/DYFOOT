@@ -544,6 +544,9 @@ data class AppSettings(
         "ANALYSIS",
         "BLOGS"
     ),
+    val liveUpdateBanner: String = "",
+    val liveSyncIntervalSec: Long = 30L,
+    val configVersion: Long = 1L,
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
 

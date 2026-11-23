@@ -383,6 +383,9 @@
         "merchantNumber": { "type": "string" },
         "merchantName": { "type": "string" },
         "categories": { "type": "string" },
+        "liveUpdateBanner": { "type": "string" },
+        "liveSyncIntervalSec": { "type": "number" },
+        "configVersion": { "type": "number" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["vipWeeklyTzs", "vipMonthlyTzs", "merchantNumber", "merchantName", "categories", "updatedAt"]

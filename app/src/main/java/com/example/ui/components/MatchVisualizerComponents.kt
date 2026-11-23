@@ -108,8 +108,8 @@ fun LiveMatchVisualizerCard(
 ) {
     val fixture = bundle.fixture
     val status = FixtureStatus.safeFrom(fixture.status)
-    val homeClean = fixture.homeTeam.replace("[SAMPLE]", "").trim()
-    val awayClean = fixture.awayTeam.replace("[SAMPLE]", "").trim()
+    val homeClean = fixture.homeTeam.trim()
+    val awayClean = fixture.awayTeam.trim()
 
     val infinite = rememberInfiniteTransition(label = "live_match_visualizer")
     val pulsePhase by infinite.animateFloat(
@@ -395,8 +395,51 @@ fun SquadFormationVisualizerCard(
     isSwahili: Boolean,
     modifier: Modifier = Modifier
 ) {
-    val homeClean = bundle.fixture.homeTeam.replace("[SAMPLE]", "").trim()
-    val awayClean = bundle.fixture.awayTeam.replace("[SAMPLE]", "").trim()
+    val homeClean = bundle.fixture.homeTeam.trim()
+    val awayClean = bundle.fixture.awayTeam.trim()
+
+    if (bundle.homeSquad.isEmpty() && bundle.awaySquad.isEmpty()) {
+        Surface(
+            color = MidnightCard,
+            shape = RoundedCornerShape(18.dp),
+            border = BorderStroke(1.dp, MidnightBorder),
+            modifier = modifier
+                .fillMaxWidth()
+                .testTag("squad_visualizer_unavailable")
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Icon(Icons.Filled.Groups, contentDescription = null, tint = InfoCyan, modifier = Modifier.size(18.dp))
+                    Text(
+                        text = if (isSwahili) "KIKOSI RASMI CHA MECHI" else "OFFICIAL STARTING LINEUPS",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = CrispWhite
+                    )
+                }
+                if (bundle.fixture.lineupsSummary.isNotBlank()) {
+                    Text(
+                        text = bundle.fixture.lineupsSummary,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = CrispWhite,
+                        lineHeight = 19.sp
+                    )
+                } else {
+                    Text(
+                        text = if (isSwahili) {
+                            "Vikosi rasmi vya $homeClean vs $awayClean bado havijatolewa na mtoa huduma mubashara. Vuta chini kuonyesha pindi vitakapotangazwa."
+                        } else {
+                            "Official lineups for $homeClean vs $awayClean have not been released yet by the live match provider."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SlateText
+                    )
+                }
+            }
+        }
+        return
+    }
+
     var squadMode by remember { mutableIntStateOf(0) } // 0=Both, 1=Home, 2=Away
     var animCycle by remember { mutableIntStateOf(1) }
     var visibleStep by remember { mutableIntStateOf(0) }
@@ -652,8 +695,8 @@ fun PreMatchH2HAnalysisCard(
     modifier: Modifier = Modifier
 ) {
     val analysis = bundle.preMatchAnalysis ?: return
-    val homeClean = bundle.fixture.homeTeam.replace("[SAMPLE]", "").trim()
-    val awayClean = bundle.fixture.awayTeam.replace("[SAMPLE]", "").trim()
+    val homeClean = bundle.fixture.homeTeam.trim()
+    val awayClean = bundle.fixture.awayTeam.trim()
 
     Surface(
         color = MidnightCard,
@@ -721,40 +764,48 @@ fun PreMatchH2HAnalysisCard(
                 }
             }
 
-            // Recent Form (Last 5 W/D/L) & Rank / Goals Avg
-            Surface(color = MidnightCardAlt, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        text = if (isSwahili) "Mwenendo wa Mechi 5 Zilizopita & Takwimu" else "Last 5 Form Guide & Season Metrics",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = CrispWhite
-                    )
-                    FormRow(
-                        teamLabel = "${homeClean.take(12)} (${analysis.homeRankLabel})",
-                        form = analysis.homeForm,
-                        goalsAvg = "${analysis.homeGoalsAvg} G/M",
-                        accent = NeonLime
-                    )
-                    FormRow(
-                        teamLabel = "${awayClean.take(12)} (${analysis.awayRankLabel})",
-                        form = analysis.awayForm,
-                        goalsAvg = "${analysis.awayGoalsAvg} G/M",
-                        accent = InfoCyan
-                    )
+            // Recent Form (Last 5 W/D/L) & Rank / Goals Avg — only rendered when provided by live API
+            if (analysis.homeForm.isNotEmpty() || analysis.awayForm.isNotEmpty()) {
+                Surface(color = MidnightCardAlt, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = if (isSwahili) "Mwenendo wa Mechi Zilizopita" else "Recent Form Guide",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = CrispWhite
+                        )
+                        if (analysis.homeForm.isNotEmpty()) {
+                            FormRow(
+                                teamLabel = homeClean.take(14) + if (analysis.homeRankLabel.isNotBlank()) " (${analysis.homeRankLabel})" else "",
+                                form = analysis.homeForm,
+                                goalsAvg = if (analysis.homeGoalsAvg.isNotBlank()) "${analysis.homeGoalsAvg} G/M" else "",
+                                accent = NeonLime
+                            )
+                        }
+                        if (analysis.awayForm.isNotEmpty()) {
+                            FormRow(
+                                teamLabel = awayClean.take(14) + if (analysis.awayRankLabel.isNotBlank()) " (${analysis.awayRankLabel})" else "",
+                                form = analysis.awayForm,
+                                goalsAvg = if (analysis.awayGoalsAvg.isNotBlank()) "${analysis.awayGoalsAvg} G/M" else "",
+                                accent = InfoCyan
+                            )
+                        }
+                    }
                 }
             }
 
-            // H2H Summary Counters + Goal Trends
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                H2HMetricPill("${analysis.h2hHomeWins}", "${homeClean.take(8)} W", NeonLime, Modifier.weight(1f))
-                H2HMetricPill("${analysis.h2hDraws}", if (isSwahili) "Sare" else "Draws", VipAmber, Modifier.weight(1f))
-                H2HMetricPill("${analysis.h2hAwayWins}", "${awayClean.take(8)} W", InfoCyan, Modifier.weight(1f))
-            }
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                H2HMetricPill(analysis.avgGoalsPerMatch, if (isSwahili) "Wastani Magoli" else "Avg Goals", CrispWhite, Modifier.weight(1f))
-                H2HMetricPill("${analysis.bttsPct}%", "BTTS Yes", WonEmerald, Modifier.weight(1f))
-                H2HMetricPill("${analysis.over25Pct}%", "Over 2.5", NeonLime, Modifier.weight(1f))
+            // H2H Summary Counters + Goal Trends — only rendered when real H2H exists
+            if (analysis.recentH2H.isNotEmpty()) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    H2HMetricPill("${analysis.h2hHomeWins}", "${homeClean.take(8)} W", NeonLime, Modifier.weight(1f))
+                    H2HMetricPill("${analysis.h2hDraws}", if (isSwahili) "Sare" else "Draws", VipAmber, Modifier.weight(1f))
+                    H2HMetricPill("${analysis.h2hAwayWins}", "${awayClean.take(8)} W", InfoCyan, Modifier.weight(1f))
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    H2HMetricPill(analysis.avgGoalsPerMatch, if (isSwahili) "Wastani Magoli" else "Avg Goals", CrispWhite, Modifier.weight(1f))
+                    H2HMetricPill("${analysis.bttsPct}%", "BTTS Yes", WonEmerald, Modifier.weight(1f))
+                    H2HMetricPill("${analysis.over25Pct}%", "Over 2.5", NeonLime, Modifier.weight(1f))
+                }
             }
 
             // Recent H2H Meetings List

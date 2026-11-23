@@ -241,7 +241,7 @@ fun HotTimetableCard(
                     TeamBadgeCircle(fixture.homeTeam, fixture.homeLogoUrl, 28.dp)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = fixture.homeTeam.replace("[SAMPLE]", "").trim(),
+                        text = fixture.homeTeam.trim(),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         color = CrispWhite,
@@ -268,7 +268,7 @@ fun HotTimetableCard(
                     modifier = Modifier.weight(1f)
                 ) {
                     Text(
-                        text = fixture.awayTeam.replace("[SAMPLE]", "").trim(),
+                        text = fixture.awayTeam.trim(),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                         color = CrispWhite,
@@ -432,7 +432,7 @@ fun MatchCenterBottomSheet(
                         TeamBadgeCircle(fixture.homeTeam, fixture.homeLogoUrl, 46.dp)
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = fixture.homeTeam.replace("[SAMPLE]", "").trim(),
+                            text = fixture.homeTeam.trim(),
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = CrispWhite,
@@ -464,7 +464,7 @@ fun MatchCenterBottomSheet(
                         TeamBadgeCircle(fixture.awayTeam, fixture.awayLogoUrl, 46.dp)
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = fixture.awayTeam.replace("[SAMPLE]", "").trim(),
+                            text = fixture.awayTeam.trim(),
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = CrispWhite,
@@ -617,8 +617,18 @@ fun MatchCenterBottomSheet(
 
                 2 -> {
                     // Pre-Match Statistical & Head-to-Head (H2H) Analysis
-                    if (matchBundle != null) {
+                    if (matchBundle?.preMatchAnalysis != null) {
                         PreMatchH2HAnalysisCard(bundle = matchBundle, isSwahili = isSwahili)
+                    } else if (!hasStats) {
+                        EmptyStateCard(
+                            icon = Icons.Filled.Stadium,
+                            title = if (isSwahili) "Takwimu za H2H Bado Hazijatolewa" else "Live H2H & Telemetry Pending",
+                            subtitle = if (isSwahili) {
+                                "Taarifa rasmi za H2H na takwimu za mechi zitaonekana hapa pindi mtoa huduma mubashara atakapoziachia."
+                            } else {
+                                "Official pre-match H2H and live statistics will appear automatically once published by the live provider."
+                            }
+                        )
                     }
                     if (hasStats) {
                         Surface(

@@ -62,8 +62,8 @@ object MatchReminderScheduler {
     ) {
         val now = System.currentTimeMillis()
         val triggerAt = computeTriggerTimeMs(fixture.kickoffEpochMs, leadMinutes, now)
-        val home = fixture.homeTeam.replace("[SAMPLE]", "").trim()
-        val away = fixture.awayTeam.replace("[SAMPLE]", "").trim()
+        val home = fixture.homeTeam.trim()
+        val away = fixture.awayTeam.trim()
 
         val intent = Intent(context, MatchReminderReceiver::class.java).apply {
             putExtra(MatchReminderReceiver.EXTRA_MATCH_ID, fixture.id)

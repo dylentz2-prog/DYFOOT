@@ -18,8 +18,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.ConfirmationNumber
@@ -46,6 +48,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -102,6 +107,7 @@ fun TipsScreen(
     val bookmarks by viewModel.bookmarks.collectAsStateWithLifecycle()
     val ads by viewModel.activeAds.collectAsStateWithLifecycle()
     val settings by viewModel.appSettings.collectAsStateWithLifecycle()
+    val isPullRefreshing by viewModel.isPullRefreshing.collectAsStateWithLifecycle()
     val language by viewModel.appLanguage.collectAsStateWithLifecycle()
     val copy = remember(language) { dyfootStrings(language) }
 
@@ -180,24 +186,49 @@ fun TipsScreen(
                 }
             }
 
-            when (val state = tipsState) {
-                is UiState.Loading -> {
-                    Column(
-                        modifier = Modifier.fillMaxSize(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        CircularProgressIndicator(color = NeonLime)
-                    }
-                }
-
-                is UiState.Error -> {
-                    Text(
-                        text = state.message,
-                        color = LiveRed,
-                        modifier = Modifier.padding(16.dp)
+            val pullRefreshState = rememberPullToRefreshState()
+            PullToRefreshBox(
+                isRefreshing = isPullRefreshing,
+                onRefresh = { viewModel.refreshAllLiveContent() },
+                state = pullRefreshState,
+                indicator = {
+                    PullToRefreshDefaults.Indicator(
+                        state = pullRefreshState,
+                        isRefreshing = isPullRefreshing,
+                        containerColor = MidnightCard,
+                        color = NeonLime,
+                        modifier = Modifier.align(Alignment.TopCenter)
                     )
-                }
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .testTag("tips_pull_refresh")
+            ) {
+                when (val state = tipsState) {
+                    is UiState.Loading -> {
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            CircularProgressIndicator(color = NeonLime)
+                        }
+                    }
+
+                    is UiState.Error -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(rememberScrollState())
+                                .padding(16.dp)
+                        ) {
+                            Text(
+                                text = state.message,
+                                color = LiveRed
+                            )
+                        }
+                    }
 
                 is UiState.Success -> {
                     val targetTier = if (selectedTab == 0) TipTier.FREE.name else TipTier.VIP.name
@@ -354,6 +385,7 @@ fun TipsScreen(
                         }
                     }
                 }
+            }
             }
         }
 

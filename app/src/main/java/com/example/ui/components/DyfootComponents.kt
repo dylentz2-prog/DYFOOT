@@ -658,7 +658,7 @@ fun TeamBadgeCircle(
     logoUrl: String = "",
     size: Dp = 30.dp
 ) {
-    val cleanName = teamName.replace("[SAMPLE]", "").trim()
+    val cleanName = teamName.trim()
     val words = cleanName.split(" ").filter { it.isNotBlank() }
     val initials = when {
         words.size >= 2 -> "${words[0].first().uppercaseChar()}${words[1].first().uppercaseChar()}"
@@ -713,8 +713,6 @@ fun MatchCard(
     onToggleReminder: (() -> Unit)? = null
 ) {
     val status = FixtureStatus.safeFrom(fixture.status)
-    val isSample = fixture.homeTeam.contains("[SAMPLE]") || fixture.awayTeam.contains("[SAMPLE]") ||
-        fixture.sourceLabel.contains("Sample", ignoreCase = true)
     val statusColor = when (status) {
         FixtureStatus.LIVE -> LiveRed
         FixtureStatus.FINISHED -> SlateText
@@ -752,32 +750,17 @@ fun MatchCard(
                     modifier = Modifier.weight(1f)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                if (isSample) {
-                    Surface(
-                        color = VipAmberContainer.copy(alpha = 0.6f),
-                        shape = RoundedCornerShape(8.dp),
-                        border = BorderStroke(1.dp, VipAmber.copy(alpha = 0.6f))
-                    ) {
-                        Text(
-                            text = "SAMPLE",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = VipAmber,
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                        )
-                    }
-                } else {
-                    Surface(
-                        color = if (status == FixtureStatus.LIVE) LiveRedContainer else MidnightCardAlt,
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text(
-                            text = if (status == FixtureStatus.LIVE) "LIVE ${fixture.minuteLabel}" else fixture.minuteLabel.ifBlank { status.label },
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = statusColor,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                        )
-                    }
+                Surface(
+                    color = if (status == FixtureStatus.LIVE) LiveRedContainer else MidnightCardAlt,
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        text = if (status == FixtureStatus.LIVE) "LIVE ${fixture.minuteLabel}" else fixture.minuteLabel.ifBlank { status.label },
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = statusColor,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
                 }
                 if (onToggleReminder != null && status != FixtureStatus.FINISHED) {
                     Spacer(modifier = Modifier.width(4.dp))
@@ -832,7 +815,7 @@ fun MatchCard(
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = fixture.homeTeam.replace("[SAMPLE]", "").trim(),
+                        text = fixture.homeTeam.trim(),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = CrispWhite,
@@ -870,7 +853,7 @@ fun MatchCard(
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = fixture.awayTeam.replace("[SAMPLE]", "").trim(),
+                        text = fixture.awayTeam.trim(),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = CrispWhite,
@@ -970,7 +953,6 @@ fun TipSlipCard(
     val unlocked = !isVip || (hasVipAccess && vipSecret != null)
     val tipStatus = TipStatus.safeFrom(tip.status)
     val risk = RiskLevel.safeFrom(tip.riskLevel)
-    val isSample = tip.matchName.contains("[SAMPLE]")
 
     val confidenceBars = when (risk) {
         RiskLevel.LOW -> 4
@@ -991,8 +973,8 @@ fun TipSlipCard(
         TipStatus.PENDING -> VipAmberContainer
     }
 
-    val homeName = tip.homeTeam.ifBlank { tip.matchName.substringBefore(" vs ", tip.matchName) }.replace("[SAMPLE]", "").trim()
-    val awayName = tip.awayTeam.ifBlank { tip.matchName.substringAfter(" vs ", "") }.replace("[SAMPLE]", "").trim()
+    val homeName = tip.homeTeam.ifBlank { tip.matchName.substringBefore(" vs ", tip.matchName) }.trim()
+    val awayName = tip.awayTeam.ifBlank { tip.matchName.substringAfter(" vs ", "") }.trim()
 
     Card(
         shape = RoundedCornerShape(22.dp),
@@ -1052,7 +1034,7 @@ fun TipSlipCard(
                     border = BorderStroke(1.dp, statusColor.copy(alpha = 0.55f))
                 ) {
                     Text(
-                        text = if (isSample) "SAMPLE" else tipStatus.label.uppercase(),
+                        text = tipStatus.label.uppercase(),
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = statusColor,
@@ -1119,7 +1101,7 @@ fun TipSlipCard(
 
                 if (analysisText.isNotBlank()) {
                     Text(
-                        text = analysisText.replace("[SAMPLE]", "").trim(),
+                        text = analysisText.trim(),
                         style = MaterialTheme.typography.bodySmall,
                         color = SlateText,
                         maxLines = 2,

@@ -105,13 +105,17 @@ jobs:
         env:
           FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
           MOBILE_MONEY_MERCHANT_KEY: ${{ secrets.MOBILE_MONEY_MERCHANT_KEY }}
+          DATASPORTS_API_KEY: ${{ secrets.DATASPORTS_API_KEY }}
+          LIVE_FOOTBALL_API_KEY: ${{ secrets.LIVE_FOOTBALL_API_KEY }}
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
           GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
         run: |
           if [ ! -f .env.example ]; then
             printf '%s\n' \
               'FOOTBALL_DATA_API_KEY=YOUR_FOOTBALL_DATA_API_KEY' \
-              'MOBILE_MONEY_MERCHANT_KEY=YOUR_MOBILE_MONEY_MERCHANT_KEY' > .env.example
+              'MOBILE_MONEY_MERCHANT_KEY=YOUR_MOBILE_MONEY_MERCHANT_KEY' \
+              'DATASPORTS_API_KEY=YOUR_DATASPORTS_API_KEY' \
+              'LIVE_FOOTBALL_API_KEY=YOUR_LIVE_FOOTBALL_API_KEY' > .env.example
           fi
           cp .env.example .env
           if [ -n "$FOOTBALL_DATA_API_KEY" ]; then
@@ -121,6 +125,14 @@ jobs:
           if [ -n "$MOBILE_MONEY_MERCHANT_KEY" ]; then
             grep -v '^MOBILE_MONEY_MERCHANT_KEY=' .env > .env.tmp && mv .env.tmp .env
             printf 'MOBILE_MONEY_MERCHANT_KEY=%s\n' "$MOBILE_MONEY_MERCHANT_KEY" >> .env
+          fi
+          if [ -n "$DATASPORTS_API_KEY" ]; then
+            grep -v '^DATASPORTS_API_KEY=' .env > .env.tmp && mv .env.tmp .env
+            printf 'DATASPORTS_API_KEY=%s\n' "$DATASPORTS_API_KEY" >> .env
+          fi
+          if [ -n "$LIVE_FOOTBALL_API_KEY" ]; then
+            grep -v '^LIVE_FOOTBALL_API_KEY=' .env > .env.tmp && mv .env.tmp .env
+            printf 'LIVE_FOOTBALL_API_KEY=%s\n' "$LIVE_FOOTBALL_API_KEY" >> .env
           fi
           if [ ! -f app/google-services.json ] && [ -n "$GOOGLE_SERVICES_JSON" ]; then
             printf '%s\n' "$GOOGLE_SERVICES_JSON" > app/google-services.json

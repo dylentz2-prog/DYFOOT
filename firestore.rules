@@ -339,6 +339,9 @@ service cloud.firestore {
              data.merchantName is string && data.merchantName.size() >= 1 && data.merchantName.size() <= 80 &&
              data.categories is list && data.categories.size() <= 20 &&
              (data.categories.size() == 0 || data.categories[0] is string) &&
+             (!('liveUpdateBanner' in data) || (data.liveUpdateBanner is string && data.liveUpdateBanner.size() <= 500)) &&
+             (!('liveSyncIntervalSec' in data) || (data.liveSyncIntervalSec is int && data.liveSyncIntervalSec >= 15 && data.liveSyncIntervalSec <= 300)) &&
+             (!('configVersion' in data) || (data.configVersion is int && data.configVersion >= 1)) &&
              isValidTimestamp(data.updatedAt);
     }
 
@@ -754,7 +757,7 @@ service cloud.firestore {
                                isValidId(settingId) &&
                                isValidAppSettings(incoming()) &&
                                incoming().keys().hasAll(['vipWeeklyTzs', 'vipMonthlyTzs', 'merchantNumber', 'merchantName', 'categories', 'updatedAt']) &&
-                               incoming().keys().hasOnly(['vipDailyTzs', 'vipWeeklyTzs', 'vipMonthlyTzs', 'vipQuarterlyTzs', 'vipAnnualTzs', 'merchantNumber', 'merchantName', 'categories', 'updatedAt']);
+                               incoming().keys().hasOnly(['vipDailyTzs', 'vipWeeklyTzs', 'vipMonthlyTzs', 'vipQuarterlyTzs', 'vipAnnualTzs', 'merchantNumber', 'merchantName', 'categories', 'liveUpdateBanner', 'liveSyncIntervalSec', 'configVersion', 'updatedAt']);
       allow delete: if false;
     }
 

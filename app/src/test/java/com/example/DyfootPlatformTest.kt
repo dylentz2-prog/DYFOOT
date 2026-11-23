@@ -74,6 +74,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.json.JSONArray
+import org.json.JSONObject
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.util.Date
@@ -326,7 +328,7 @@ class DyfootPlatformTest {
     }
 
     @Test
-    fun `match detail bundle builds 11v11 squad formations and H2H pre-match probabilities`() {
+    fun `match detail bundle uses zero fake lineups or H2H when root is null and parses real telemetry when present`() {
         val fixture = FixtureItem(
             id = "fx_ars_liv",
             homeTeam = "Arsenal",
@@ -341,15 +343,23 @@ class DyfootPlatformTest {
             shotsAway = "9",
             minuteLabel = "64'"
         )
-        val bundle = ExternalSportsService().buildAnalyticalMatchBundle(fixture, root = null)
-        assertEquals(11, bundle.homeSquad.size)
-        assertEquals(11, bundle.awaySquad.size)
-        assertEquals(57, bundle.attackMomentumHomePct)
+        val service = ExternalSportsService()
+        val emptyBundle = service.buildAnalyticalMatchBundle(fixture, root = null)
+        assertTrue(emptyBundle.homeSquad.isEmpty())
+        assertTrue(emptyBundle.awaySquad.isEmpty())
+        assertNull(emptyBundle.preMatchAnalysis)
+        assertEquals(57, emptyBundle.attackMomentumHomePct)
 
-        val analysis = bundle.preMatchAnalysis!!
+        val realRoot = buildRealSummaryJson(
+            homeTeam = "Arsenal",
+            awayTeam = "Liverpool",
+            competition = "Premier League"
+        )
+        val realBundle = service.buildAnalyticalMatchBundle(fixture, root = realRoot)
+        assertEquals(11, realBundle.homeSquad.size)
+        assertEquals(11, realBundle.awaySquad.size)
+        val analysis = realBundle.preMatchAnalysis!!
         assertEquals(100, analysis.homeWinPct + analysis.drawPct + analysis.awayWinPct)
-        assertEquals(5, analysis.homeForm.size)
-        assertEquals(5, analysis.awayForm.size)
         assertTrue(analysis.recentH2H.isNotEmpty())
         assertTrue(analysis.tacticalEdgeNote.isNotBlank())
     }
@@ -367,7 +377,7 @@ class DyfootPlatformTest {
     }
 
     @Test
-    fun `visualizer squad and H2H cards render analytical sections cleanly`() {
+    fun `visualizer squad card shows honest unavailable state without rosters and renders full pitch with real rosters`() {
         val fixture = FixtureItem(
             id = "fx_vis_test",
             homeTeam = "Simba SC",
@@ -380,20 +390,27 @@ class DyfootPlatformTest {
             possessionHome = "54%",
             possessionAway = "46%"
         )
-        val bundle = ExternalSportsService().buildAnalyticalMatchBundle(fixture, root = null)
+        val service = ExternalSportsService()
+        val unavailableBundle = service.buildAnalyticalMatchBundle(fixture, root = null)
+        val realBundle = service.buildAnalyticalMatchBundle(
+            fixture = fixture,
+            root = buildRealSummaryJson("Simba SC", "Young Africans", "NBC Premier League")
+        )
 
         composeRule.setContent {
             DyfootTheme {
                 androidx.compose.foundation.layout.Column(
                     modifier = Modifier.verticalScroll(rememberScrollState())
                 ) {
-                    LiveMatchVisualizerCard(bundle = bundle, isSwahili = false)
-                    SquadFormationVisualizerCard(bundle = bundle, isSwahili = false)
-                    PreMatchH2HAnalysisCard(bundle = bundle, isSwahili = false)
+                    SquadFormationVisualizerCard(bundle = unavailableBundle, isSwahili = false)
+                    LiveMatchVisualizerCard(bundle = realBundle, isSwahili = false)
+                    SquadFormationVisualizerCard(bundle = realBundle, isSwahili = false)
+                    PreMatchH2HAnalysisCard(bundle = realBundle, isSwahili = false)
                 }
             }
         }
 
+        composeRule.onNodeWithTag("squad_visualizer_unavailable").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("LIVE MATCH VISUALIZER").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("ANIMATED SQUAD FORMATION").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("PRE-MATCH STATISTICAL & H2H").performScrollTo().assertIsDisplayed()
@@ -401,17 +418,144 @@ class DyfootPlatformTest {
     }
 
     @Test
-    fun `initial in-app news includes Swahili Tanzania social, TZ leagues, African leagues and English updates`() {
-        val news = ExternalSportsService().getInitialInAppNews()
-        val swArticles = news.filter { it.language == "SW" }
-        val enArticles = news.filter { it.language == "EN" }
+    fun `datasportsapi parser handles live finished upcoming matches and league filter`() {
+        val payload = JSONObject(
+            """
+            {
+              "data": [
+                {
+                  "id": "ds_101",
+                  "sport": "football",
+                  "homeTeam": {"name": "Arsenal FC", "shortName": "Arsenal"},
+                  "awayTeam": {"name": "Chelsea FC", "shortName": "Chelsea"},
+                  "league": {"name": "Premier League"},
+                  "homeScore": {"current": 2},
+                  "awayScore": {"current": 1},
+                  "status": {"type": "inprogress", "label": "Second Half"},
+                  "clock": {"label": "68'"},
+                  "kickoff": "2026-11-23T19:00:00Z",
+                  "venue": {"name": "Emirates Stadium"}
+                },
+                {
+                  "id": "ds_102",
+                  "sport": "football",
+                  "homeTeam": {"name": "Real Madrid"},
+                  "awayTeam": {"name": "Sevilla"},
+                  "league": {"name": "La Liga"},
+                  "score": {"home": 3, "away": 0},
+                  "status": {"type": "finished", "label": "FT"},
+                  "kickoff": "2026-11-23T15:00:00Z"
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+        val service = ExternalSportsService()
+        val all = service.parseDataSportsLivescores(payload, "ALL")
+        assertEquals(2, all.size)
+        assertEquals("Arsenal FC", all[0].homeTeam)
+        assertEquals(2L, all[0].homeScore)
+        assertEquals(FixtureStatus.LIVE.name, all[0].status)
+        assertEquals("68'", all[0].minuteLabel)
+        assertEquals(FixtureStatus.FINISHED.name, all[1].status)
 
-        assertTrue(swArticles.isNotEmpty())
-        assertTrue(enArticles.isNotEmpty())
-        assertTrue(swArticles.any { it.category == "TANZANIA_LIGI" })
-        assertTrue(swArticles.any { it.category == "TANZANIA_SOCIAL" })
-        assertTrue(swArticles.any { it.category == "AFRICA_CAF" })
-        assertTrue(news.all { it.sourceUrl.isBlank() && it.content.isNotBlank() })
+        val plOnly = service.parseDataSportsLivescores(payload, "PL")
+        assertEquals(1, plOnly.size)
+        assertEquals("ds_ds_101", plOnly[0].id)
+    }
+
+    @Test
+    fun `live football api parser and fixture deduplication merge real multi-provider scores cleanly`() {
+        val lfaPayload = JSONObject(
+            """
+            {
+              "matches": [
+                {
+                  "match_id": "5501",
+                  "home": {"name": "Arsenal", "logo": "https://cdn.example.com/arsenal.png"},
+                  "away": {"name": "Chelsea", "logo": "https://cdn.example.com/chelsea.png"},
+                  "league": {"name": "Premier League"},
+                  "home_score": 2,
+                  "away_score": 2,
+                  "status": {"is_live": true, "display": "79'"},
+                  "minute": "79'",
+                  "start_time": "2026-11-23T19:00:00Z"
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+        val service = ExternalSportsService()
+        val lfaList = service.parseLiveFootballApiMatches(lfaPayload, "ALL")
+        assertEquals(1, lfaList.size)
+        assertEquals("lfa_5501", lfaList[0].id)
+        assertEquals(FixtureStatus.LIVE.name, lfaList[0].status)
+        assertEquals("79'", lfaList[0].minuteLabel)
+        assertEquals(2L, lfaList[0].awayScore)
+
+        val upcomingSameMatch = FixtureItem(
+            id = "espn_PL_5501",
+            homeTeam = "Arsenal FC",
+            awayTeam = "Chelsea FC",
+            competition = "Premier League",
+            homeScore = 0L,
+            awayScore = 0L,
+            status = FixtureStatus.UPCOMING.name,
+            venue = "Emirates Stadium",
+            espnEventId = "5501",
+            espnSportPath = "soccer/eng.1"
+        )
+        val merged = service.deduplicateFixtures(listOf(upcomingSameMatch, lfaList[0]))
+        assertEquals(1, merged.size)
+        assertEquals(FixtureStatus.LIVE.name, merged[0].status)
+        assertEquals(2L, merged[0].homeScore)
+        assertEquals(2L, merged[0].awayScore)
+        assertEquals("https://cdn.example.com/arsenal.png", merged[0].homeLogoUrl)
+        assertEquals("5501", merged[0].espnEventId)
+    }
+
+    private fun buildRealSummaryJson(
+        homeTeam: String,
+        awayTeam: String,
+        competition: String
+    ): JSONObject {
+        fun buildRoster(teamName: String, homeAway: String): JSONObject {
+            val arr = JSONArray()
+            val roles = listOf("GK", "D", "D", "D", "D", "M", "M", "M", "F", "F", "F")
+            for (i in 0 until 11) {
+                arr.put(
+                    JSONObject()
+                        .put("starter", true)
+                        .put("jersey", "${i + 1}")
+                        .put("position", JSONObject().put("abbreviation", roles[i]))
+                        .put("athlete", JSONObject().put("shortName", "$homeAway P${i + 1}"))
+                )
+            }
+            return JSONObject()
+                .put("homeAway", homeAway)
+                .put("formation", "4-3-3")
+                .put("team", JSONObject().put("shortDisplayName", teamName))
+                .put("roster", arr)
+        }
+
+        val h2hEvents = JSONArray().put(
+            JSONObject()
+                .put("gameDate", "2026-04-12")
+                .put("leagueName", competition)
+                .put("homeTeamName", homeTeam)
+                .put("awayTeamName", awayTeam)
+                .put("score", "2-1")
+        )
+
+        return JSONObject()
+            .put("rosters", JSONArray().put(buildRoster(homeTeam, "home")).put(buildRoster(awayTeam, "away")))
+            .put("headToHeadGames", JSONArray().put(JSONObject().put("events", h2hEvents)))
+            .put(
+                "predictor",
+                JSONObject()
+                    .put("homeTeam", JSONObject().put("gameProjection", 52.0))
+                    .put("awayTeam", JSONObject().put("gameProjection", 26.0))
+            )
     }
 
     @Test

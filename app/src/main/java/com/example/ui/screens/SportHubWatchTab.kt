@@ -526,7 +526,7 @@ fun WatchFeedTab(viewModel: DyfootViewModel) {
                             }
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = video.title.replace("[SAMPLE]", "").trim(),
+                                text = video.title.trim(),
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = CrispWhite

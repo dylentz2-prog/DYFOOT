@@ -50,8 +50,8 @@ object LiveMatchAlertEngine {
         current: FixtureItem,
         isSwahili: Boolean
     ): Pair<String, String>? {
-        val home = current.homeTeam.replace("[SAMPLE]", "").trim()
-        val away = current.awayTeam.replace("[SAMPLE]", "").trim()
+        val home = current.homeTeam.trim()
+        val away = current.awayTeam.trim()
         val prevStatus = FixtureStatus.safeFrom(previous.status)
         val currStatus = FixtureStatus.safeFrom(current.status)
 

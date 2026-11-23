@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -59,6 +60,9 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -74,6 +78,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -100,6 +105,7 @@ import com.example.ui.theme.VipAmber
 import com.example.viewmodel.DyfootViewModel
 import kotlinx.coroutines.delay
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PodcastsFeedTab(viewModel: DyfootViewModel) {
     val context = LocalContext.current
@@ -107,6 +113,7 @@ fun PodcastsFeedTab(viewModel: DyfootViewModel) {
     val recentIds by viewModel.recentlyPlayedPodcastIds.collectAsStateWithLifecycle()
     val activePodcast by viewModel.activePodcast.collectAsStateWithLifecycle()
     val bookmarks by viewModel.bookmarks.collectAsStateWithLifecycle()
+    val isPullRefreshing by viewModel.isPullRefreshing.collectAsStateWithLifecycle()
     val bookmarkedIds = bookmarks.map { it.contentId }.toSet()
 
     var query by remember { mutableStateOf("") }
@@ -272,11 +279,30 @@ fun PodcastsFeedTab(viewModel: DyfootViewModel) {
                     )
                 }
 
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(top = 6.dp, bottom = 112.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                val pullRefreshState = rememberPullToRefreshState()
+                PullToRefreshBox(
+                    isRefreshing = isPullRefreshing,
+                    onRefresh = { viewModel.refreshAllLiveContent() },
+                    state = pullRefreshState,
+                    indicator = {
+                        PullToRefreshDefaults.Indicator(
+                            state = pullRefreshState,
+                            isRefreshing = isPullRefreshing,
+                            containerColor = MidnightCard,
+                            color = NeonLime,
+                            modifier = Modifier.align(Alignment.TopCenter)
+                        )
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .testTag("podcasts_pull_refresh")
                 ) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(top = 6.dp, bottom = 112.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
                     if (recent.isNotEmpty() && activePodcast == null) {
                         item {
                             Column(modifier = Modifier.padding(horizontal = 14.dp)) {
@@ -343,6 +369,7 @@ fun PodcastsFeedTab(viewModel: DyfootViewModel) {
                             )
                         }
                     }
+                }
                 }
             }
         }

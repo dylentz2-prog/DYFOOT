@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AdminPanelSettings
@@ -54,6 +55,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -256,16 +258,32 @@ private fun AdminOverviewSection(
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedButton(
-                        onClick = { viewModel.seedStarterSampleContent() },
+                        onClick = { viewModel.refreshAllLiveContent() },
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("admin_seed_sample_btn")
+                            .testTag("admin_sync_live_feeds_btn")
                     ) {
                         Icon(Icons.Filled.Refresh, contentDescription = null, tint = NeonLime)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Seed [SAMPLE] Starter Pack (Tips, News, Video, Podcast)", color = NeonLime)
+                        Text("Sync All Real-Time Feeds Now", color = NeonLime)
                     }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    val dsActive = viewModel.hasDataSportsApiKey()
+                    val lfaActive = viewModel.hasLiveFootballApiKey()
+                    val fdActive = viewModel.hasFootballDataApiKey()
+                    Text(
+                        text = buildString {
+                            append("Live APIs: ")
+                            append(if (dsActive) "DataSportsAPI ✓" else "DataSportsAPI (No Key)")
+                            append(" • ")
+                            append(if (lfaActive) "Live Football API ✓" else "Live Football API (No Key)")
+                            append(" • ")
+                            append(if (fdActive) "football-data ✓" else "football-data (No Key)")
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = SlateText
+                    )
                 }
             }
         }
@@ -954,6 +972,8 @@ private fun AdminSettingsSection(viewModel: DyfootViewModel) {
     var merchantNum by remember { mutableStateOf(current.merchantNumber) }
     var merchantName by remember { mutableStateOf(current.merchantName) }
     var categoriesCsv by remember { mutableStateOf(current.categories.joinToString(", ")) }
+    var liveBanner by remember { mutableStateOf(current.liveUpdateBanner) }
+    var syncSec by remember { mutableStateOf(current.liveSyncIntervalSec.toString()) }
 
     LaunchedEffect(current) {
         daily = current.vipDailyTzs.toString()
@@ -963,6 +983,8 @@ private fun AdminSettingsSection(viewModel: DyfootViewModel) {
         merchantNum = current.merchantNumber
         merchantName = current.merchantName
         categoriesCsv = current.categories.joinToString(", ")
+        liveBanner = current.liveUpdateBanner
+        syncSec = current.liveSyncIntervalSec.toString()
     }
 
     LazyColumn(
@@ -973,7 +995,31 @@ private fun AdminSettingsSection(viewModel: DyfootViewModel) {
         item {
             Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MidnightCard), border = BorderStroke(1.dp, MidnightBorder)) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("VIP Package Pricing (TSH) & Categories", style = MaterialTheme.typography.titleMedium, color = NeonLime)
+                    Text("VIP Pricing, Live Sync & Over-the-Air Updates", style = MaterialTheme.typography.titleMedium, color = NeonLime)
+                    Text(
+                        text = "Live Config Version: v${current.configVersion} • Changes push directly to all active devices without downloading a new APK.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = InfoCyan
+                    )
+                    OutlinedTextField(
+                        value = liveBanner,
+                        onValueChange = { liveBanner = it },
+                        label = { Text("Live In-App Broadcast Banner (pushes without APK update)") },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("admin_live_banner_input"),
+                        maxLines = 2
+                    )
+                    OutlinedTextField(
+                        value = syncSec,
+                        onValueChange = { input -> syncSec = input.filter { it.isDigit() } },
+                        label = { Text("Live Score Auto-Refresh Cadence (sec, 15–300)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("admin_sync_interval_input"),
+                        singleLine = true
+                    )
                     OutlinedTextField(value = daily, onValueChange = { daily = it }, label = { Text("ROCK PACKAGE • Per Day (TSH)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                     OutlinedTextField(value = weekly, onValueChange = { weekly = it }, label = { Text("STAR PACKAGE • Per Week (TSH)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                     OutlinedTextField(value = monthly, onValueChange = { monthly = it }, label = { Text("PRO PACKAGE • Per Month (TSH)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
@@ -984,6 +1030,7 @@ private fun AdminSettingsSection(viewModel: DyfootViewModel) {
                     Button(
                         onClick = {
                             val cats = categoriesCsv.split(",").map { it.trim() }.filter { it.isNotBlank() }.take(20)
+                            val parsedSync = syncSec.toLongOrNull()?.coerceIn(15L, 300L) ?: current.liveSyncIntervalSec
                             viewModel.saveAppSettings(
                                 AppSettings(
                                     vipDailyTzs = daily.toLongOrNull() ?: current.vipDailyTzs,
@@ -993,13 +1040,18 @@ private fun AdminSettingsSection(viewModel: DyfootViewModel) {
                                     vipAnnualTzs = annual.toLongOrNull() ?: current.vipAnnualTzs,
                                     merchantNumber = merchantNum.trim(),
                                     merchantName = merchantName.trim(),
-                                    categories = cats
+                                    categories = cats,
+                                    liveUpdateBanner = liveBanner.trim(),
+                                    liveSyncIntervalSec = parsedSync,
+                                    configVersion = current.configVersion + 1L
                                 )
                             )
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = NeonLime, contentColor = MidnightBlack),
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("Save Platform Settings", fontWeight = FontWeight.Bold) }
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("admin_save_settings_btn")
+                    ) { Text("Save & Push Live Update", fontWeight = FontWeight.Bold) }
                 }
             }
         }

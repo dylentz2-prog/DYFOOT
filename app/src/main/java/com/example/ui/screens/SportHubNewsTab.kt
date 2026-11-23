@@ -64,6 +64,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -130,6 +133,7 @@ fun NewsFeedTab(
     val settings by viewModel.appSettings.collectAsStateWithLifecycle()
     val bookmarks by viewModel.bookmarks.collectAsStateWithLifecycle()
     val ads by viewModel.activeAds.collectAsStateWithLifecycle()
+    val isPullRefreshing by viewModel.isPullRefreshing.collectAsStateWithLifecycle()
     val appLanguage by viewModel.appLanguage.collectAsStateWithLifecycle()
 
     var selectedCategory by remember { mutableStateOf("ALL") }
@@ -183,13 +187,31 @@ fun NewsFeedTab(
     val bookmarkedIds = bookmarks.map { it.contentId }.toSet()
     val hubAds = ads.filter { it.placement == "SPORT_HUB" }
 
-    LazyColumn(
+    val pullRefreshState = rememberPullToRefreshState()
+
+    PullToRefreshBox(
+        isRefreshing = isPullRefreshing,
+        onRefresh = { viewModel.refreshAllLiveContent() },
+        state = pullRefreshState,
+        indicator = {
+            PullToRefreshDefaults.Indicator(
+                state = pullRefreshState,
+                isRefreshing = isPullRefreshing,
+                containerColor = MidnightCard,
+                color = NeonLime,
+                modifier = Modifier.align(Alignment.TopCenter)
+            )
+        },
         modifier = Modifier
             .fillMaxSize()
-            .background(MidnightBlack),
-        contentPadding = PaddingValues(bottom = 112.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+            .background(MidnightBlack)
+            .testTag("news_pull_refresh")
     ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 112.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
         // Instagram Story Circles Tray (Matching Screenshots 8 & 9)
         item {
             LazyRow(
@@ -540,6 +562,7 @@ fun NewsFeedTab(
             }
         }
     }
+    }
 
     readingArticle?.let { article ->
         val isLiked = article.id in locallyLikedIds
@@ -648,7 +671,6 @@ private fun InstagramPostCard(
     val displaySummary = article.localizedSummary(displaySwahili)
     val displayContent = article.localizedContent(displaySwahili)
     val handle = article.sourceName.lowercase().replace(" ", "")
-    val isSample = displayTitle.contains("[SAMPLE]")
     val initials = article.sourceName.trim()
         .split(" ")
         .filter { it.isNotBlank() }
@@ -719,21 +741,6 @@ private fun InstagramPostCard(
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (isSample) {
-                        Surface(
-                            color = VipAmberContainer.copy(alpha = 0.6f),
-                            shape = RoundedCornerShape(10.dp),
-                            border = BorderStroke(1.dp, VipAmber.copy(alpha = 0.6f))
-                        ) {
-                            Text(
-                                text = "SAMPLE",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = VipAmber,
-                                fontSize = 10.sp,
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
                     Surface(
                         color = MidnightCardAlt,
                         shape = RoundedCornerShape(10.dp),

@@ -45,10 +45,14 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -113,6 +117,7 @@ private data class HeroPromoSlide(
     val actionType: Int
 )
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     viewModel: DyfootViewModel,
@@ -142,6 +147,7 @@ fun HomeScreen(
     val inspectedFixture by viewModel.inspectedFixtureDetail.collectAsStateWithLifecycle()
     val inspectedBundle by viewModel.inspectedMatchBundle.collectAsStateWithLifecycle()
     val isLoadingMatchDetail by viewModel.isLoadingMatchDetail.collectAsStateWithLifecycle()
+    val isPullRefreshing by viewModel.isPullRefreshing.collectAsStateWithLifecycle()
 
     var selectedSport by remember { mutableStateOf("All") }
     var pendingFavFixture by remember { mutableStateOf<com.example.data.model.FixtureItem?>(null) }
@@ -271,13 +277,31 @@ fun HomeScreen(
         scoped.ifEmpty { news }
     }
 
-    LazyColumn(
+    val pullRefreshState = rememberPullToRefreshState()
+
+    PullToRefreshBox(
+        isRefreshing = isPullRefreshing,
+        onRefresh = { viewModel.refreshAllLiveContent() },
+        state = pullRefreshState,
+        indicator = {
+            PullToRefreshDefaults.Indicator(
+                state = pullRefreshState,
+                isRefreshing = isPullRefreshing,
+                containerColor = MidnightCard,
+                color = NeonLime,
+                modifier = Modifier.align(Alignment.TopCenter)
+            )
+        },
         modifier = Modifier
             .fillMaxSize()
-            .background(MidnightBlack),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 112.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
+            .background(MidnightBlack)
+            .testTag("home_pull_refresh")
     ) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 112.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
         // Brand Tagline + Live Pulse Strip
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -327,6 +351,39 @@ fun HomeScreen(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Icon(Icons.Filled.Public, contentDescription = null, tint = NeonLime, modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
+        }
+
+        // Live Over-the-Air Platform Broadcast (pushes directly via Firestore without new APK)
+        if (settings.liveUpdateBanner.isNotBlank()) {
+            item(key = "live_update_banner") {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = NeonLimeContainer,
+                    border = BorderStroke(1.dp, NeonLime.copy(alpha = 0.65f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("home_live_update_banner")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.NotificationsActive,
+                            contentDescription = null,
+                            tint = NeonLime,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = settings.liveUpdateBanner,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = CrispWhite
+                        )
                     }
                 }
             }
@@ -828,7 +885,7 @@ fun HomeScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = vt.matchName.replace("[SAMPLE]", "").trim(),
+                                            text = vt.matchName.trim(),
                                             style = MaterialTheme.typography.titleSmall,
                                             fontWeight = FontWeight.SemiBold,
                                             color = CrispWhite,
@@ -1071,6 +1128,7 @@ fun HomeScreen(
         item {
             OwnerSocialFooter(copy = copy)
         }
+    }
     }
 
     // Rich Interactive Match Center Bottom Sheet (Visualizer, Squad XI, H2H, Possession, Corners, Cards, Predictor)

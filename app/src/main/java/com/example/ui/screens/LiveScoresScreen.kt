@@ -22,8 +22,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Favorite
@@ -34,6 +36,7 @@ import androidx.compose.material.icons.filled.SportsSoccer
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -43,6 +46,9 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -82,6 +88,7 @@ import com.example.ui.theme.NeonLimeContainer
 import com.example.ui.theme.SlateText
 import com.example.viewmodel.DyfootViewModel
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LiveScoresScreen(
     viewModel: DyfootViewModel,
@@ -96,6 +103,7 @@ fun LiveScoresScreen(
     val liveStatus by viewModel.liveFeedStatus.collectAsStateWithLifecycle()
     val updatedAt by viewModel.liveFeedUpdatedAt.collectAsStateWithLifecycle()
     val isSyncing by viewModel.isSyncingLiveScores.collectAsStateWithLifecycle()
+    val isPullRefreshing by viewModel.isPullRefreshing.collectAsStateWithLifecycle()
     val leagueFilter by viewModel.liveLeagueFilter.collectAsStateWithLifecycle()
     val dateOffset by viewModel.liveDateOffset.collectAsStateWithLifecycle()
     val standings by viewModel.standings.collectAsStateWithLifecycle()
@@ -240,6 +248,26 @@ fun LiveScoresScreen(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
         )
 
+        val pullRefreshState = rememberPullToRefreshState()
+        PullToRefreshBox(
+            isRefreshing = isPullRefreshing,
+            onRefresh = { viewModel.refreshAllLiveContent() },
+            state = pullRefreshState,
+            indicator = {
+                PullToRefreshDefaults.Indicator(
+                    state = pullRefreshState,
+                    isRefreshing = isPullRefreshing,
+                    containerColor = MidnightCard,
+                    color = NeonLime,
+                    modifier = Modifier.align(Alignment.TopCenter)
+                )
+            },
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .testTag("live_scores_pull_refresh")
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
         if (selectedTab < 3) {
             OutlinedTextField(
                 value = matchSearchQuery,
@@ -396,11 +424,16 @@ fun LiveScoresScreen(
             }
 
             if (filtered.isEmpty()) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp)
+                ) {
                     EmptyStateCard(
                         icon = Icons.Filled.SportsSoccer,
                         title = "No Matches in This Filter",
-                        subtitle = "Switch between ${copy.yesterday} / ${copy.today} / ${copy.tomorrow}, pick another competition, or tap Refresh."
+                        subtitle = "Pull down to refresh or switch between ${copy.yesterday} / ${copy.today} / ${copy.tomorrow}."
                     )
                 }
             } else {
@@ -467,11 +500,16 @@ fun LiveScoresScreen(
             }
 
             if (standings.isEmpty()) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp)
+                ) {
                     EmptyStateCard(
                         icon = Icons.Filled.SportsSoccer,
                         title = "Loading League Table",
-                        subtitle = standingsStatus ?: "Select a competition above to fetch live standings."
+                        subtitle = standingsStatus ?: "Pull down to refresh or select a competition above."
                     )
                 }
             } else {
@@ -554,6 +592,8 @@ fun LiveScoresScreen(
                         }
                     }
                 }
+            }
+        }
             }
         }
     }

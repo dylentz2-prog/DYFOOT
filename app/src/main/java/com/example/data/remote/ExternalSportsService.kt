@@ -89,46 +89,54 @@ class ExternalSportsService {
     private fun resolveMobileMoneyKey(): String =
         sanitizeConfiguredKey(BuildConfig.MOBILE_MONEY_MERCHANT_KEY, "YOUR_MOBILE_MONEY_MERCHANT_KEY")
 
+    private fun resolveDataSportsKey(): String =
+        sanitizeConfiguredKey(BuildConfig.DATASPORTS_API_KEY, "YOUR_DATASPORTS_API_KEY")
+
+    private fun resolveLiveFootballApiKey(): String =
+        sanitizeConfiguredKey(BuildConfig.LIVE_FOOTBALL_API_KEY, "YOUR_LIVE_FOOTBALL_API_KEY")
+
     fun hasFootballDataApiKey(): Boolean = resolveFootballDataKey().isNotEmpty()
+
+    fun hasDataSportsApiKey(): Boolean = resolveDataSportsKey().isNotEmpty()
+
+    fun hasLiveFootballApiKey(): Boolean = resolveLiveFootballApiKey().isNotEmpty()
 
     fun hasMobileMoneyGatewayKey(): Boolean = resolveMobileMoneyKey().isNotEmpty()
 
     /**
      * Full Worldwide Sports Live Sync:
-     * 1) Fetches real-time public ESPN multi-sport & multi-league scoreboards directly
-     *    (Premier League, Champions League, La Liga, Serie A, Bundesliga, Ligue 1, Europa League, MLS, NBA, UFC, ATP, F1).
-     * 2) Queries football-data.org v4 when FOOTBALL_DATA_API_KEY is configured and merges uniquely.
+     * Queries all configured real-time providers in parallel and merges without duplicates:
+     * 1) DataSportsAPI (/v2/livescores)
+     * 2) Live Football API (live-football-api.com/api/v1/matches)
+     * 3) football-data.org v4
+     * 4) Public multi-sport scoreboards
      */
     suspend fun fetchLiveMatches(
         leagueCode: String = "ALL",
         dateOffsetDays: Int = 0
     ): LiveApiResult<List<FixtureItem>> = withContext(Dispatchers.IO) {
-        val apiKey = resolveFootballDataKey()
-        val combined = mutableListOf<FixtureItem>()
+        val fdKey = resolveFootballDataKey()
+        val dsKey = resolveDataSportsKey()
+        val lfaKey = resolveLiveFootballApiKey()
         val dateParam = yyyymmddForOffset(dateOffsetDays)
+        val isoDateParam = isoDateForOffset(dateOffsetDays)
+        val selectedLeague = DYFOOT_LIVE_LEAGUES.firstOrNull { it.code == leagueCode }
+        val isFootballTarget = leagueCode == "ALL" || selectedLeague?.sportCategory == "Football"
 
-        if (apiKey.isNotEmpty() && dateOffsetDays == 0) {
-            runCatching {
-                val selectedLeague = DYFOOT_LIVE_LEAGUES.firstOrNull { it.code == leagueCode }
-                val fdCode = selectedLeague?.footballDataCode.orEmpty()
-                if (leagueCode == "ALL" || fdCode.isNotBlank()) {
-                    val url = if (leagueCode == "ALL") {
-                        "https://api.football-data.org/v4/matches"
-                    } else {
-                        "https://api.football-data.org/v4/competitions/$fdCode/matches"
-                    }
-                    val request = Request.Builder()
-                        .url(url)
-                        .header("X-Auth-Token", apiKey)
-                        .build()
-                    client.newCall(request).execute().use { response ->
-                        if (response.isSuccessful) {
-                            val root = JSONObject(response.body?.string().orEmpty())
-                            combined.addAll(parseFootballDataMatches(root, leagueCode))
-                        }
-                    }
-                }
-            }
+        val dsDeferred = async {
+            if (dsKey.isNotEmpty() && dateOffsetDays == 0 && isFootballTarget) {
+                fetchDataSportsLivescores(dsKey, leagueCode)
+            } else emptyList()
+        }
+        val lfaDeferred = async {
+            if (lfaKey.isNotEmpty() && isFootballTarget) {
+                fetchLiveFootballApiMatches(lfaKey, leagueCode, isoDateParam)
+            } else emptyList()
+        }
+        val fdDeferred = async {
+            if (fdKey.isNotEmpty() && dateOffsetDays == 0) {
+                fetchFootballDataMatches(fdKey, leagueCode)
+            } else emptyList()
         }
 
         val targets = if (leagueCode == "ALL") {
@@ -136,22 +144,16 @@ class ExternalSportsService {
         } else {
             DYFOOT_LIVE_LEAGUES.filter { it.code == leagueCode && it.sportPath.isNotBlank() }
         }
-
-        val espnLists = targets.map { league ->
-            async {
-                fetchEspnScoreboardForLeague(league, dateParam)
-            }
-        }.awaitAll().flatten()
-
-        val seenKeys = combined.map { "${it.homeTeam.lowercase()}_${it.awayTeam.lowercase()}" }.toMutableSet()
-        espnLists.forEach { item ->
-            val key = "${item.homeTeam.lowercase()}_${item.awayTeam.lowercase()}"
-            if (seenKeys.add(key)) {
-                combined.add(item)
-            }
+        val espnDeferred = targets.map { league ->
+            async { fetchEspnScoreboardForLeague(league, dateParam) }
         }
 
-        val sorted = combined.sortedWith(
+        val dsFixtures = dsDeferred.await()
+        val lfaFixtures = lfaDeferred.await()
+        val fdFixtures = fdDeferred.await()
+        val espnFixtures = espnDeferred.awaitAll().flatten()
+
+        val sorted = deduplicateFixtures(dsFixtures + lfaFixtures + fdFixtures + espnFixtures).sortedWith(
             compareBy<FixtureItem>(
                 {
                     when (FixtureStatus.safeFrom(it.status)) {
@@ -165,12 +167,371 @@ class ExternalSportsService {
             )
         )
 
-        val sourceLabel = if (apiKey.isNotEmpty()) {
-            "football-data.org + World Sports Direct"
-        } else {
-            "World Sports Direct Live"
+        val activeProviders = buildList {
+            if (dsKey.isNotEmpty()) add("DataSportsAPI")
+            if (lfaKey.isNotEmpty()) add("Live Football API")
+            if (fdKey.isNotEmpty()) add("football-data.org")
+            add("World Feed")
         }
-        LiveApiResult.Success(sorted, sourceLabel, nowLabel())
+        LiveApiResult.Success(sorted, activeProviders.joinToString(" + "), nowLabel())
+    }
+
+    private fun fetchFootballDataMatches(apiKey: String, leagueCode: String): List<FixtureItem> {
+        return try {
+            val selectedLeague = DYFOOT_LIVE_LEAGUES.firstOrNull { it.code == leagueCode }
+            val fdCode = selectedLeague?.footballDataCode.orEmpty()
+            if (leagueCode != "ALL" && fdCode.isBlank()) return emptyList()
+            val url = if (leagueCode == "ALL") {
+                "https://api.football-data.org/v4/matches"
+            } else {
+                "https://api.football-data.org/v4/competitions/$fdCode/matches"
+            }
+            val request = Request.Builder()
+                .url(url)
+                .header("X-Auth-Token", apiKey)
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return emptyList()
+                val root = JSONObject(response.body?.string().orEmpty())
+                parseFootballDataMatches(root, leagueCode)
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun fetchDataSportsLivescores(apiKey: String, leagueCode: String): List<FixtureItem> {
+        return try {
+            val request = Request.Builder()
+                .url("https://api.datasportsapi.com/v2/livescores?sport=football")
+                .header("Authorization", "Bearer $apiKey")
+                .header("Accept", "application/json")
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return emptyList()
+                val body = response.body?.string().orEmpty()
+                val root = if (body.trimStart().startsWith("[")) {
+                    JSONObject().put("data", JSONArray(body))
+                } else {
+                    JSONObject(body)
+                }
+                parseDataSportsLivescores(root, leagueCode)
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    internal fun parseDataSportsLivescores(root: JSONObject, leagueCode: String = "ALL"): List<FixtureItem> {
+        val items = root.optJSONArray("data")
+            ?: root.optJSONArray("matches")
+            ?: root.optJSONArray("events")
+            ?: return emptyList()
+
+        return buildList {
+            for (i in 0 until items.length()) {
+                val obj = items.optJSONObject(i) ?: continue
+                val sportVal = obj.optString("sport", "football")
+                if (sportVal.isNotBlank() && !sportVal.contains("football", true) && !sportVal.contains("soccer", true)) {
+                    continue
+                }
+                val rawId = obj.optString("id").ifBlank { obj.optLong("id", i.toLong()).toString() }
+                val homeObj = obj.optJSONObject("home") ?: obj.optJSONObject("homeTeam") ?: obj.optJSONObject("home_team")
+                val awayObj = obj.optJSONObject("away") ?: obj.optJSONObject("awayTeam") ?: obj.optJSONObject("away_team")
+                val homeName = homeObj?.optString("name")?.ifBlank { homeObj.optString("shortName") }
+                    ?: obj.optString("homeTeam").ifBlank { obj.optString("home") }.ifBlank { "Home" }
+                val awayName = awayObj?.optString("name")?.ifBlank { awayObj.optString("shortName") }
+                    ?: obj.optString("awayTeam").ifBlank { obj.optString("away") }.ifBlank { "Away" }
+                val homeLogo = homeObj?.optString("logo")?.ifBlank { homeObj.optString("crest") }.orEmpty()
+                val awayLogo = awayObj?.optString("logo")?.ifBlank { awayObj.optString("crest") }.orEmpty()
+
+                val leagueObj = obj.optJSONObject("league") ?: obj.optJSONObject("competition")
+                val compName = leagueObj?.optString("name")?.ifBlank { obj.optString("competition") }
+                    ?: obj.optString("league").ifBlank { "Football" }
+                if (!matchesLeagueFilter(compName, leagueCode)) continue
+
+                val homeScore = extractScoreValue(obj, "homeScore", "home_score", homeSide = true)
+                val awayScore = extractScoreValue(obj, "awayScore", "away_score", homeSide = false)
+
+                val statusObj = obj.optJSONObject("status")
+                val statusType = statusObj?.optString("type")?.ifBlank { statusObj.optString("phase") }
+                    ?: obj.optString("status", "notstarted")
+                val statusDesc = statusObj?.optString("label")?.ifBlank { statusObj.optString("description") }.orEmpty()
+                val fixtureStatus = mapRawStatus(statusType.ifBlank { statusDesc })
+
+                val kickoffRaw = obj.optString("kickoff").ifBlank { obj.optString("startTime") }
+                    .ifBlank { obj.optString("utcDate") }
+                val epochMs = parseFlexibleEpochMs(kickoffRaw)
+
+                val clockObj = obj.optJSONObject("clock")
+                val clockLabel = clockObj?.optString("label")
+                    ?.ifBlank { clockObj.optString("displayValue") }
+                    ?: obj.optString("minute", "")
+                val minuteLabel = when (fixtureStatus) {
+                    FixtureStatus.LIVE -> clockLabel.ifBlank { statusDesc.ifBlank { "LIVE" } }
+                    FixtureStatus.FINISHED -> statusDesc.ifBlank { "FT" }
+                    FixtureStatus.POSTPONED -> "PPD"
+                    FixtureStatus.UPCOMING -> SimpleDateFormat("HH:mm", Locale.getDefault()).format(java.util.Date(epochMs))
+                }
+
+                add(
+                    FixtureItem(
+                        id = "ds_$rawId",
+                        homeTeam = homeName,
+                        awayTeam = awayName,
+                        competition = compName,
+                        homeScore = homeScore,
+                        awayScore = awayScore,
+                        status = fixtureStatus.name,
+                        minuteLabel = minuteLabel,
+                        kickoffEpochMs = epochMs,
+                        venue = obj.optJSONObject("venue")?.optString("name") ?: obj.optString("venue", ""),
+                        sourceLabel = "DataSportsAPI • $compName",
+                        streamStatus = "COMING_SOON",
+                        published = true,
+                        homeLogoUrl = homeLogo,
+                        awayLogoUrl = awayLogo,
+                        leagueCode = if (leagueCode == "ALL") inferLeagueCode(compName) else leagueCode,
+                        sportCategory = "Football",
+                        isHotMatch = isMarqueeCompetition(compName)
+                    )
+                )
+            }
+        }
+    }
+
+    private fun fetchLiveFootballApiMatches(
+        apiKey: String,
+        leagueCode: String,
+        isoDate: String
+    ): List<FixtureItem> {
+        return try {
+            val url = "https://live-football-api.com/api/v1/matches?api_key=$apiKey&date=$isoDate&lang=en"
+            val request = Request.Builder()
+                .url(url)
+                .header("Accept", "application/json")
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return emptyList()
+                val body = response.body?.string().orEmpty()
+                val root = if (body.trimStart().startsWith("[")) {
+                    JSONObject().put("matches", JSONArray(body))
+                } else {
+                    JSONObject(body)
+                }
+                parseLiveFootballApiMatches(root, leagueCode)
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    internal fun parseLiveFootballApiMatches(root: JSONObject, leagueCode: String = "ALL"): List<FixtureItem> {
+        val dataObj = root.optJSONObject("data")
+        val matches = root.optJSONArray("matches")
+            ?: dataObj?.optJSONArray("matches")
+            ?: root.optJSONArray("data")
+            ?: root.optJSONArray("events")
+            ?: return emptyList()
+
+        return buildList {
+            for (i in 0 until matches.length()) {
+                val m = matches.optJSONObject(i) ?: continue
+                val rawId = m.optString("match_id").ifBlank {
+                    m.optString("id").ifBlank { m.optLong("id", i.toLong()).toString() }
+                }
+                val homeObj = m.optJSONObject("home") ?: m.optJSONObject("homeTeam") ?: m.optJSONObject("home_team")
+                val awayObj = m.optJSONObject("away") ?: m.optJSONObject("awayTeam") ?: m.optJSONObject("away_team")
+
+                val homeName = homeObj?.optString("name")
+                    ?.ifBlank { homeObj.optString("shortName") }
+                    ?.ifBlank { homeObj.optString("short_name") }
+                    ?: m.optString("home_name").ifBlank { m.optString("homeTeam") }.ifBlank { "Home" }
+                val awayName = awayObj?.optString("name")
+                    ?.ifBlank { awayObj.optString("shortName") }
+                    ?.ifBlank { awayObj.optString("short_name") }
+                    ?: m.optString("away_name").ifBlank { m.optString("awayTeam") }.ifBlank { "Away" }
+                val homeLogo = homeObj?.optString("logo")
+                    ?.ifBlank { homeObj.optString("crest") }
+                    ?.ifBlank { homeObj.optString("badge") }
+                    ?: m.optString("home_logo")
+                val awayLogo = awayObj?.optString("logo")
+                    ?.ifBlank { awayObj.optString("crest") }
+                    ?.ifBlank { awayObj.optString("badge") }
+                    ?: m.optString("away_logo")
+
+                val leagueObj = m.optJSONObject("league") ?: m.optJSONObject("competition")
+                val compName = leagueObj?.optString("name")?.ifBlank { m.optString("league_name") }
+                    ?: m.optString("competition").ifBlank { "Football" }
+                if (!matchesLeagueFilter(compName, leagueCode)) continue
+
+                val homeScore = extractScoreValue(m, "homeScore", "home_score", homeSide = true)
+                val awayScore = extractScoreValue(m, "awayScore", "away_score", homeSide = false)
+
+                val statusObj = m.optJSONObject("status")
+                val isLiveBool = statusObj?.optBoolean("is_live", false) == true || m.optBoolean("is_live", false)
+                val statusStr = if (isLiveBool) {
+                    "LIVE"
+                } else {
+                    statusObj?.optString("type")
+                        ?.ifBlank { statusObj.optString("short") }
+                        ?.ifBlank { statusObj.optString("display") }
+                        ?: m.optString("status", "NS")
+                }
+                val fixtureStatus = mapRawStatus(statusStr)
+
+                val kickoffRaw = m.optString("start_time")
+                    .ifBlank { m.optString("utcDate") }
+                    .ifBlank { m.optString("kickoff") }
+                    .ifBlank { m.optString("date") }
+                val epochMs = parseFlexibleEpochMs(kickoffRaw)
+
+                val liveClock = m.optString("minute")
+                    .ifBlank { m.optString("clock") }
+                    .ifBlank { statusObj?.optString("display").orEmpty() }
+                val minuteLabel = when (fixtureStatus) {
+                    FixtureStatus.LIVE -> liveClock.ifBlank { "LIVE" }
+                    FixtureStatus.FINISHED -> statusObj?.optString("short").orEmpty().ifBlank { "FT" }
+                    FixtureStatus.POSTPONED -> "PPD"
+                    FixtureStatus.UPCOMING -> SimpleDateFormat("HH:mm", Locale.getDefault()).format(java.util.Date(epochMs))
+                }
+
+                add(
+                    FixtureItem(
+                        id = "lfa_$rawId",
+                        homeTeam = homeName,
+                        awayTeam = awayName,
+                        competition = compName,
+                        homeScore = homeScore,
+                        awayScore = awayScore,
+                        status = fixtureStatus.name,
+                        minuteLabel = minuteLabel,
+                        kickoffEpochMs = epochMs,
+                        venue = m.optJSONObject("venue")?.optString("name") ?: m.optString("venue", ""),
+                        sourceLabel = "Live Football API • $compName",
+                        streamStatus = "COMING_SOON",
+                        published = true,
+                        homeLogoUrl = homeLogo,
+                        awayLogoUrl = awayLogo,
+                        leagueCode = if (leagueCode == "ALL") inferLeagueCode(compName) else leagueCode,
+                        sportCategory = "Football",
+                        isHotMatch = isMarqueeCompetition(compName)
+                    )
+                )
+            }
+        }
+    }
+
+    internal fun deduplicateFixtures(fixtures: List<FixtureItem>): List<FixtureItem> {
+        val merged = linkedMapOf<String, FixtureItem>()
+        for (item in fixtures) {
+            val key = "${normalizeTeamKey(item.homeTeam)}__${normalizeTeamKey(item.awayTeam)}"
+            val existing = merged[key]
+            if (existing == null) {
+                merged[key] = item
+            } else {
+                val preferIncomingScore = FixtureStatus.safeFrom(item.status) == FixtureStatus.LIVE &&
+                    FixtureStatus.safeFrom(existing.status) != FixtureStatus.LIVE
+                merged[key] = existing.copy(
+                    homeScore = if (preferIncomingScore || item.homeScore > existing.homeScore) item.homeScore else existing.homeScore,
+                    awayScore = if (preferIncomingScore || item.awayScore > existing.awayScore) item.awayScore else existing.awayScore,
+                    status = if (preferIncomingScore) item.status else existing.status,
+                    minuteLabel = if (preferIncomingScore || existing.minuteLabel.isBlank()) item.minuteLabel else existing.minuteLabel,
+                    homeLogoUrl = existing.homeLogoUrl.ifBlank { item.homeLogoUrl },
+                    awayLogoUrl = existing.awayLogoUrl.ifBlank { item.awayLogoUrl },
+                    venue = existing.venue.ifBlank { item.venue },
+                    espnEventId = existing.espnEventId.ifBlank { item.espnEventId },
+                    espnSportPath = existing.espnSportPath.ifBlank { item.espnSportPath },
+                    eventsSummary = existing.eventsSummary.ifBlank { item.eventsSummary },
+                    possessionHome = existing.possessionHome.ifBlank { item.possessionHome },
+                    possessionAway = existing.possessionAway.ifBlank { item.possessionAway },
+                    shotsHome = existing.shotsHome.ifBlank { item.shotsHome },
+                    shotsAway = existing.shotsAway.ifBlank { item.shotsAway },
+                    cornersHome = existing.cornersHome.ifBlank { item.cornersHome },
+                    cornersAway = existing.cornersAway.ifBlank { item.cornersAway }
+                )
+            }
+        }
+        return merged.values.toList()
+    }
+
+    private fun normalizeTeamKey(raw: String): String =
+        raw.lowercase(Locale.US)
+            .replace(Regex("\\b(fc|sc|cf|afc|ac|as|ss|cd|ud|rc|bk)\\b"), "")
+            .replace(Regex("[^a-z0-9]"), "")
+
+    private fun extractScoreValue(obj: JSONObject, camelKey: String, snakeKey: String, homeSide: Boolean): Long {
+        val sideKey = if (homeSide) "home" else "away"
+        val scoreObj = obj.optJSONObject("score")
+        val nestedSide = obj.optJSONObject(camelKey)
+        return when {
+            nestedSide != null && nestedSide.has("current") -> nestedSide.optLong("current", 0L)
+            obj.has(camelKey) && obj.opt(camelKey) is Number -> obj.optLong(camelKey, 0L)
+            obj.has(snakeKey) && obj.opt(snakeKey) is Number -> obj.optLong(snakeKey, 0L)
+            scoreObj?.optJSONObject("fullTime")?.has(sideKey) == true &&
+                !scoreObj.optJSONObject("fullTime")!!.isNull(sideKey) ->
+                scoreObj.optJSONObject("fullTime")!!.optLong(sideKey, 0L)
+            scoreObj?.has(sideKey) == true && !scoreObj.isNull(sideKey) -> scoreObj.optLong(sideKey, 0L)
+            else -> 0L
+        }
+    }
+
+    private fun mapRawStatus(raw: String): FixtureStatus {
+        val upper = raw.trim().uppercase(Locale.US)
+        return when {
+            upper in setOf("INPROGRESS", "IN_PROGRESS", "IN_PLAY", "LIVE", "PAUSED", "HT", "1H", "2H", "ET", "PEN") ||
+                upper.contains("INPROGRESS") || upper.contains("LIVE") -> FixtureStatus.LIVE
+            upper in setOf("FINISHED", "FT", "AET", "PEN_FT", "FULLTIME", "COMPLETE", "COMPLETED", "ENDED") ||
+                upper.contains("FINISH") -> FixtureStatus.FINISHED
+            upper in setOf("POSTPONED", "PPD", "PST", "CANCELLED", "CANCELED", "SUSPENDED", "ABANDONED") -> FixtureStatus.POSTPONED
+            else -> FixtureStatus.UPCOMING
+        }
+    }
+
+    private fun parseFlexibleEpochMs(raw: String): Long {
+        if (raw.isBlank()) return System.currentTimeMillis()
+        val formats = listOf(
+            "yyyy-MM-dd'T'HH:mm:ss'Z'",
+            "yyyy-MM-dd'T'HH:mm'Z'",
+            "yyyy-MM-dd'T'HH:mm:ssXXX",
+            "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd'T'HH:mm:ss"
+        )
+        for (pattern in formats) {
+            val fmt = SimpleDateFormat(pattern, Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+            runCatching { fmt.parse(raw)?.time }.getOrNull()?.let { return it }
+        }
+        return raw.toLongOrNull()?.let { if (it < 10_000_000_000L) it * 1000L else it }
+            ?: System.currentTimeMillis()
+    }
+
+    private fun matchesLeagueFilter(competitionName: String, leagueCode: String): Boolean {
+        if (leagueCode == "ALL") return true
+        val option = DYFOOT_LIVE_LEAGUES.firstOrNull { it.code == leagueCode } ?: return true
+        if (competitionName.contains(option.label, ignoreCase = true)) return true
+        return when (leagueCode) {
+            "PL" -> competitionName.contains("Premier League", true) && !competitionName.contains("NBC", true)
+            "PD" -> competitionName.contains("La Liga", true) || competitionName.contains("Primera", true)
+            "SA" -> competitionName.contains("Serie A", true)
+            "BL1" -> competitionName.contains("Bundesliga", true)
+            "FL1" -> competitionName.contains("Ligue 1", true)
+            "CL" -> competitionName.contains("Champions League", true) && !competitionName.contains("CAF", true)
+            "EL" -> competitionName.contains("Europa League", true)
+            else -> false
+        }
+    }
+
+    private fun inferLeagueCode(competitionName: String): String {
+        return DYFOOT_LIVE_LEAGUES.firstOrNull { opt ->
+            opt.code != "ALL" && competitionName.contains(opt.label, ignoreCase = true)
+        }?.code ?: "ALL"
+    }
+
+    private fun isMarqueeCompetition(comp: String): Boolean {
+        val c = comp.lowercase(Locale.US)
+        return c.contains("premier league") || c.contains("champions league") ||
+            c.contains("la liga") || c.contains("serie a") || c.contains("bundesliga") ||
+            c.contains("europa") || c.contains("caf") || c.contains("nbc") || c.contains("world cup")
     }
 
     private fun fetchEspnScoreboardForLeague(
@@ -498,6 +859,25 @@ class ExternalSportsService {
      * - Real-time attacking momentum ratio & latest event pulse banner
      */
     suspend fun fetchMatchDetailBundle(fixture: FixtureItem): MatchDetailBundle = withContext(Dispatchers.IO) {
+        val lfaKey = resolveLiveFootballApiKey()
+        if (fixture.id.startsWith("lfa_") && lfaKey.isNotEmpty()) {
+            val lfaFixture = runCatching {
+                val matchId = fixture.id.removePrefix("lfa_")
+                val req = Request.Builder()
+                    .url("https://live-football-api.com/api/v1/live_match_details?api_key=$lfaKey&match_id=$matchId")
+                    .header("Accept", "application/json")
+                    .build()
+                client.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use fixture
+                    val root = JSONObject(resp.body?.string().orEmpty())
+                    parseLiveFootballApiDetailsIntoFixture(fixture, root)
+                }
+            }.getOrDefault(fixture)
+            if (lfaFixture.espnEventId.isBlank() || lfaFixture.espnSportPath.isBlank()) {
+                return@withContext buildAnalyticalMatchBundle(lfaFixture, null)
+            }
+        }
+
         if (fixture.espnEventId.isBlank() || fixture.espnSportPath.isBlank()) {
             return@withContext buildAnalyticalMatchBundle(fixture, null)
         }
@@ -517,6 +897,46 @@ class ExternalSportsService {
         } catch (_: Exception) {
             buildAnalyticalMatchBundle(fixture, null)
         }
+    }
+
+    private fun parseLiveFootballApiDetailsIntoFixture(fixture: FixtureItem, root: JSONObject): FixtureItem {
+        val data = root.optJSONObject("data") ?: root
+        val eventsArr = data.optJSONArray("events") ?: data.optJSONArray("timeline")
+        val timeline = buildString {
+            if (eventsArr != null) {
+                for (i in 0 until eventsArr.length().coerceAtMost(20)) {
+                    val ev = eventsArr.optJSONObject(i) ?: continue
+                    val min = ev.optString("minute").ifBlank { ev.optString("time") }
+                    val type = ev.optString("type").ifBlank { ev.optString("event") }
+                    val player = ev.optString("player").ifBlank { ev.optString("player_name") }
+                    val icon = when {
+                        type.contains("goal", true) -> "⚽"
+                        type.contains("yellow", true) -> "🟨"
+                        type.contains("red", true) -> "🟥"
+                        type.contains("sub", true) -> "🔄"
+                        else -> "•"
+                    }
+                    val line = "$icon ${min.ifBlank { "--'" }} ${type.ifBlank { "" }} ${if (player.isNotBlank()) "— $player" else ""}".trim()
+                    if (line.isNotBlank()) {
+                        if (isNotEmpty()) append("\n")
+                        append(line)
+                    }
+                }
+            }
+        }.ifBlank { fixture.eventsSummary }
+
+        val stats = data.optJSONObject("statistics") ?: data.optJSONObject("stats")
+        val homeStats = stats?.optJSONObject("home")
+        val awayStats = stats?.optJSONObject("away")
+        return fixture.copy(
+            eventsSummary = timeline,
+            possessionHome = homeStats?.optString("possession")?.ifBlank { fixture.possessionHome } ?: fixture.possessionHome,
+            possessionAway = awayStats?.optString("possession")?.ifBlank { fixture.possessionAway } ?: fixture.possessionAway,
+            shotsHome = homeStats?.optString("shots")?.ifBlank { fixture.shotsHome } ?: fixture.shotsHome,
+            shotsAway = awayStats?.optString("shots")?.ifBlank { fixture.shotsAway } ?: fixture.shotsAway,
+            cornersHome = homeStats?.optString("corners")?.ifBlank { fixture.cornersHome } ?: fixture.cornersHome,
+            cornersAway = awayStats?.optString("corners")?.ifBlank { fixture.cornersAway } ?: fixture.cornersAway
+        )
     }
 
     private fun parseSummaryIntoFixture(fixture: FixtureItem, root: JSONObject): FixtureItem {
@@ -632,22 +1052,22 @@ class ExternalSportsService {
     }
 
     fun buildAnalyticalMatchBundle(fixture: FixtureItem, root: JSONObject?): MatchDetailBundle {
-        val homeClean = fixture.homeTeam.replace("[SAMPLE]", "").trim().ifBlank { "Home" }
-        val awayClean = fixture.awayTeam.replace("[SAMPLE]", "").trim().ifBlank { "Away" }
+        val homeClean = fixture.homeTeam.trim().ifBlank { "Home" }
+        val awayClean = fixture.awayTeam.trim().ifBlank { "Away" }
 
-        // Track goal/card players from events summary or keyEvents
+        // Track real goal/card events from provider timeline
         val timelineLines = fixture.eventsSummary.lines().filter { it.isNotBlank() }
         val latestEventBanner = timelineLines.lastOrNull() ?: when (FixtureStatus.safeFrom(fixture.status)) {
-            FixtureStatus.LIVE -> "LIVE ${fixture.minuteLabel} • High-tempo battle in ${fixture.competition}"
+            FixtureStatus.LIVE -> "LIVE ${fixture.minuteLabel} • ${fixture.competition}"
             FixtureStatus.FINISHED -> "FULL TIME • $homeClean ${fixture.homeScore}-${fixture.awayScore} $awayClean"
-            FixtureStatus.UPCOMING -> "Pre-Match Tactical Setup • Kickoff ${fixture.minuteLabel}"
+            FixtureStatus.UPCOMING -> "Kickoff ${fixture.minuteLabel} • ${fixture.competition}"
             FixtureStatus.POSTPONED -> "Fixture Postponed • ${fixture.competition}"
         }
 
-        // Parse real rosters if present in ESPN summary
+        // Parse real rosters from live provider summary; do NOT fabricate stub lineups if absent.
         val rostersArr = root?.optJSONArray("rosters")
-        var homeFormation = "4-3-3"
-        var awayFormation = "4-2-3-1"
+        var homeFormation = ""
+        var awayFormation = ""
         val parsedHomePlayers = mutableListOf<SquadPlayerNode>()
         val parsedAwayPlayers = mutableListOf<SquadPlayerNode>()
 
@@ -658,7 +1078,7 @@ class ExternalSportsService {
                     r.optJSONObject("team")?.optString("shortDisplayName")
                         ?.equals(homeClean, ignoreCase = true) == true ||
                     (rIdx == 0 && r.optString("homeAway").isBlank())
-                val formStr = r.optString("formation").ifBlank { if (isHomeRoster) "4-3-3" else "4-2-3-1" }
+                val formStr = r.optString("formation").orEmpty()
                 if (isHomeRoster) homeFormation = formStr else awayFormation = formStr
 
                 val roster = r.optJSONArray("roster") ?: continue
@@ -682,16 +1102,8 @@ class ExternalSportsService {
             }
         }
 
-        val homeSquad = if (parsedHomePlayers.size >= 5) {
-            parsedHomePlayers
-        } else {
-            layoutPlayersOnPitch(defaultTacticalStub(homeClean, isHome = true), isHome = true, eventsSummary = fixture.eventsSummary)
-        }
-        val awaySquad = if (parsedAwayPlayers.size >= 5) {
-            parsedAwayPlayers
-        } else {
-            layoutPlayersOnPitch(defaultTacticalStub(awayClean, isHome = false), isHome = false, eventsSummary = fixture.eventsSummary)
-        }
+        val homeSquad = if (parsedHomePlayers.size >= 5) parsedHomePlayers else emptyList()
+        val awaySquad = if (parsedAwayPlayers.size >= 5) parsedAwayPlayers else emptyList()
 
         val preMatch = buildPreMatchAnalysis(fixture, homeClean, awayClean, root)
 
@@ -701,13 +1113,14 @@ class ExternalSportsService {
         val momentumHome = when {
             possHome != null -> possHome.coerceIn(22, 78)
             shotsH + shotsA > 0 -> ((shotsH * 100f) / (shotsH + shotsA)).roundToInt().coerceIn(25, 75)
-            else -> preMatch.homeWinPct.coerceIn(30, 70)
+            preMatch != null && preMatch.homeWinPct > 0 -> preMatch.homeWinPct.coerceIn(25, 75)
+            else -> 50
         }
 
         return MatchDetailBundle(
             fixture = fixture,
-            homeFormation = homeFormation,
-            awayFormation = awayFormation,
+            homeFormation = homeFormation.ifBlank { if (homeSquad.isNotEmpty()) "XI" else "" },
+            awayFormation = awayFormation.ifBlank { if (awaySquad.isNotEmpty()) "XI" else "" },
             homeSquad = homeSquad,
             awaySquad = awaySquad,
             preMatchAnalysis = preMatch,
@@ -721,10 +1134,12 @@ class ExternalSportsService {
         homeClean: String,
         awayClean: String,
         root: JSONObject?
-    ): PreMatchAnalysis {
-        // Extract real H2H games if present in ESPN summary
+    ): PreMatchAnalysis? {
+        if (root == null) return null
+
+        // Extract real H2H games if present in provider summary
         val h2hMeetings = mutableListOf<H2HMeeting>()
-        val h2hArr = root?.optJSONArray("headToHeadGames")
+        val h2hArr = root.optJSONArray("headToHeadGames")
         var h2hHomeW = 0
         var h2hD = 0
         var h2hAwayW = 0
@@ -737,10 +1152,11 @@ class ExternalSportsService {
                     val ev = events.optJSONObject(j) ?: continue
                     val scoreLine = ev.optString("score", "")
                     val parts = scoreLine.split("-", ":").mapNotNull { it.trim().toIntOrNull() }
+                    if (parts.size < 2) continue
                     val hTeam = ev.optString("homeTeamName").ifBlank { homeClean }
                     val aTeam = ev.optString("awayTeamName").ifBlank { awayClean }
-                    val hs = parts.getOrElse(0) { 1 }
-                    val asScore = parts.getOrElse(1) { 1 }
+                    val hs = parts[0]
+                    val asScore = parts[1]
                     h2hMeetings.add(
                         H2HMeeting(
                             dateLabel = ev.optString("gameDate", "").take(10).ifBlank { "H2H" },
@@ -761,83 +1177,47 @@ class ExternalSportsService {
             }
         }
 
-        // Extract ESPN predictor / win probability if available
-        val predictor = root?.optJSONObject("predictor")
+        // Extract real win probability from provider predictor
+        val predictor = root.optJSONObject("predictor")
         val homeProjWin = predictor?.optJSONObject("homeTeam")?.optDouble("gameProjection", -1.0) ?: -1.0
         val awayProjWin = predictor?.optJSONObject("awayTeam")?.optDouble("gameProjection", -1.0) ?: -1.0
+        val hasPredictor = homeProjWin in 1.0..98.0 && awayProjWin in 1.0..98.0
 
-        // Seed deterministic realistic values from team names & league when live predictor absent
-        val seed = (homeClean.hashCode() * 31 + awayClean.hashCode()).absoluteValue
-        val formPool = listOf("W", "W", "D", "W", "L", "W", "D", "L", "W", "D")
-        val homeForm = (0 until 5).map { idx -> formPool[(seed + idx * 3) % formPool.size] }
-        val awayForm = (0 until 5).map { idx -> formPool[(seed / 3 + idx * 7 + 1) % formPool.size] }
+        if (h2hMeetings.isEmpty() && !hasPredictor) {
+            return null
+        }
 
         val homeWinPct: Int
         val drawPct: Int
         val awayWinPct: Int
-        if (homeProjWin in 1.0..98.0 && awayProjWin in 1.0..98.0) {
+        if (hasPredictor) {
             homeWinPct = homeProjWin.roundToInt().coerceIn(10, 80)
             awayWinPct = awayProjWin.roundToInt().coerceIn(10, 80)
             drawPct = (100 - homeWinPct - awayWinPct).coerceIn(10, 38)
         } else {
-            val hStrength = homeForm.sumOf { if (it == "W") 3 else if (it == "D") 1 else 0 } + 2 // Home advantage
-            val aStrength = awayForm.sumOf { if (it == "W") 3 else if (it == "D") 1 else 0 }
-            val totalS = (hStrength + aStrength + 5).coerceAtLeast(1)
-            homeWinPct = ((hStrength * 100f) / totalS).roundToInt().coerceIn(22, 68)
-            awayWinPct = ((aStrength * 100f) / totalS).roundToInt().coerceIn(16, 58)
-            drawPct = (100 - homeWinPct - awayWinPct).coerceIn(15, 34)
-        }
-
-        if (h2hMeetings.isEmpty()) {
-            h2hHomeW = 2 + (seed % 3)
-            h2hD = 1 + (seed % 2)
-            h2hAwayW = 1 + ((seed / 5) % 3)
-            val fallbackPairs = listOf(
-                Triple("Sep", 2, 1),
-                Triple("Mar", 1, 1),
-                Triple("Nov", 0, 2),
-                Triple("Apr", 3, 1),
-                Triple("Oct", 2, 2)
-            )
-            fallbackPairs.forEachIndexed { idx, (month, hs, asVal) ->
-                val isSwap = idx % 2 == 1
-                h2hMeetings.add(
-                    H2HMeeting(
-                        dateLabel = "$month • Last ${idx + 1}",
-                        competition = fixture.competition,
-                        homeTeam = if (isSwap) awayClean else homeClean,
-                        awayTeam = if (isSwap) homeClean else awayClean,
-                        homeScore = if (isSwap) asVal else hs,
-                        awayScore = if (isSwap) hs else asVal
-                    )
-                )
-            }
+            val totalH2H = (h2hHomeW + h2hD + h2hAwayW).coerceAtLeast(1)
+            homeWinPct = ((h2hHomeW * 100f) / totalH2H).roundToInt()
+            drawPct = ((h2hD * 100f) / totalH2H).roundToInt()
+            awayWinPct = (100 - homeWinPct - drawPct).coerceAtLeast(0)
         }
 
         val totalGoalsH2H = h2hMeetings.sumOf { it.homeScore + it.awayScore }
         val avgGoals = if (h2hMeetings.isNotEmpty()) {
             String.format(Locale.US, "%.1f", totalGoalsH2H.toDouble() / h2hMeetings.size)
-        } else "2.6"
+        } else "--"
         val bttsCount = h2hMeetings.count { it.homeScore > 0 && it.awayScore > 0 }
         val over25Count = h2hMeetings.count { it.homeScore + it.awayScore >= 3 }
-        val bttsPct = if (h2hMeetings.isNotEmpty()) ((bttsCount * 100) / h2hMeetings.size).coerceIn(35, 88) else 60
-        val over25Pct = if (h2hMeetings.isNotEmpty()) ((over25Count * 100) / h2hMeetings.size).coerceIn(30, 85) else 58
-
-        val homeGoalsAvg = String.format(Locale.US, "%.1f", 1.2 + (seed % 11) * 0.12)
-        val awayGoalsAvg = String.format(Locale.US, "%.1f", 1.0 + ((seed / 7) % 10) * 0.11)
-        val homeRank = 1 + (seed % 8)
-        val awayRank = 2 + ((seed / 3) % 10)
+        val bttsPct = if (h2hMeetings.isNotEmpty()) ((bttsCount * 100) / h2hMeetings.size) else 0
+        val over25Pct = if (h2hMeetings.isNotEmpty()) ((over25Count * 100) / h2hMeetings.size) else 0
 
         val edgeNote = when {
-            homeWinPct >= awayWinPct + 12 -> "$homeClean hold home tactical advantage with ${homeForm.count { it == "W" }} wins in last 5."
-            awayWinPct >= homeWinPct + 10 -> "$awayClean bring stronger away attacking transition ($awayGoalsAvg goals/game)."
-            bttsPct >= 65 -> "High-tempo H2H trend: Both teams scored in $bttsPct% of recent meetings (avg $avgGoals goals)."
-            else -> "Tight tactical contest expected; midfield possession and set-piece corners likely decisive."
+            h2hMeetings.isNotEmpty() -> "$homeClean vs $awayClean • ${h2hMeetings.size} verified H2H meetings ($avgGoals goals/match)."
+            else -> "Live win projection powered by official match telemetry."
         }
 
         return PreMatchAnalysis(
-            homeForm = homeForm,
-            awayForm = awayForm,
+            homeForm = emptyList(),
+            awayForm = emptyList(),
             homeWinPct = homeWinPct,
             drawPct = drawPct,
             awayWinPct = awayWinPct,
@@ -847,17 +1227,13 @@ class ExternalSportsService {
             avgGoalsPerMatch = avgGoals,
             bttsPct = bttsPct,
             over25Pct = over25Pct,
-            homeGoalsAvg = homeGoalsAvg,
-            awayGoalsAvg = awayGoalsAvg,
-            homeRankLabel = "#$homeRank",
-            awayRankLabel = "#$awayRank",
+            homeGoalsAvg = "",
+            awayGoalsAvg = "",
+            homeRankLabel = "",
+            awayRankLabel = "",
             recentH2H = h2hMeetings,
             tacticalEdgeNote = edgeNote,
-            dataSourceLabel = if (h2hArr != null || predictor != null) {
-                "Live ESPN Match Intelligence & H2H"
-            } else {
-                "DYFOOT Statistical & H2H Model"
-            }
+            dataSourceLabel = "Live Official Match Intelligence"
         )
     }
 
@@ -871,17 +1247,6 @@ class ExternalSportsService {
             index in 1..4 -> "DEF"
             index in 5..7 -> "MID"
             else -> "FWD"
-        }
-    }
-
-    private fun defaultTacticalStub(teamName: String, isHome: Boolean): List<Triple<String, String, String>> {
-        val tag = teamName.take(3).uppercase(Locale.US).ifBlank { if (isHome) "HOM" else "AWY" }
-        val roles = listOf("GK", "DEF", "DEF", "DEF", "DEF", "MID", "MID", "MID", "FWD", "FWD", "FWD")
-        val nums = if (isHome) listOf("1", "2", "4", "5", "3", "6", "8", "10", "7", "9", "11")
-        else listOf("13", "22", "15", "6", "19", "4", "14", "10", "17", "9", "20")
-        return roles.mapIndexed { idx, role ->
-            val label = if (idx == 0) "$tag GK" else "$tag #${nums[idx]}"
-            Triple(label, nums[idx], role)
         }
     }
 
@@ -1145,9 +1510,6 @@ class ExternalSportsService {
         val swahiliSportsFilter: Boolean = false
     )
 
-    fun getInitialInAppNews(): List<NewsArticle> =
-        buildTanzaniaAfricaSwahiliDesk() + buildEnglishInitialInAppDesk()
-
     suspend fun fetchPermittedSportsRssNews(): List<NewsArticle> = withContext(Dispatchers.IO) {
         val feeds = listOf(
             // Worldwide English Sports Feeds
@@ -1198,11 +1560,10 @@ class ExternalSportsService {
             }
         }.awaitAll().flatten()
 
-        val swahiliDesk = buildTanzaniaAfricaSwahiliDesk()
-        val combinedSw = (liveRssArticles.filter { it.language == "SW" } + swahiliDesk)
+        val combinedSw = liveRssArticles.filter { it.language == "SW" }
             .distinctBy { it.title.lowercase(Locale.US) }
             .take(24)
-        val combinedEn = (liveRssArticles.filter { it.language == "EN" } + buildEnglishInitialInAppDesk())
+        val combinedEn = liveRssArticles.filter { it.language == "EN" }
             .distinctBy { it.title.lowercase(Locale.US) }
             .take(24)
 
@@ -1353,155 +1714,16 @@ class ExternalSportsService {
         return results
     }
 
-    private fun buildTanzaniaAfricaSwahiliDesk(): List<NewsArticle> {
-        return listOf(
-            NewsArticle(
-                id = "sw_tz_nbc_derby_pulse",
-                title = "Mbio za Ubingwa NBC Premier League: Simba SC, Yanga na Azam FC Zatamba Kwenye Maandalizi",
-                summary = "Klabu tatu za juu Ligi Kuu Tanzania Bara zimeongeza kasi mazoezini kuelekea michezo mikali ya mzunguko wa lala salama.",
-                content = "Ushindani wa Ligi Kuu ya NBC Tanzania Bara umeingia hatua ya moto wakati Simba SC, Young Africans (Yanga) na Azam FC zikikaza buti katika viwanja vya mazoezi jijini Dar es Salaam.\n\nMakocha wa klabu hizo wamelenga nidhamu ya ulinzi na mashambulizi ya haraka pembeni ili kutetea pointi tatu muhimu nyumbani na ugenini.\n\nMashabiki kupitia kurasa za kijamii za soka Tanzania wamekuwa wakijadili viwango vya viungo wapya na washambuliaji wanaotegemewa kufanya makubwa katika Uwanja wa Benjamin Mkapa na Chamazi Complex.",
-                category = "TANZANIA_LIGI",
-                sourceName = "DYFOOT Tanzania Desk",
-                sourceUrl = "",
-                published = true,
-                isExternalRss = false,
-                likesCount = 128L,
-                commentsCount = 14L,
-                publishedDateLabel = "Leo • Ligi Kuu TZ",
-                language = "SW"
-            ),
-            NewsArticle(
-                id = "sw_tz_social_kariakoo_buzz",
-                title = "Mitandao ya Kijamii Tanzania: Gumzo la Mashabiki kuhusu Usajili wa Dirisha Kubwa na Wazawa",
-                summary = "Kutoka Instagram, X na TikTok ya wachambuzi wa michezo Tanzania — majina ya nyota wa Ligi Kuu yanaongoza mijadala.",
-                content = "Kurasa maarufu za habari za michezo mitandaoni Tanzania zimewaka moto kwa mijadala ya kiufundi kuhusu nyota wanaowindwa katika dirisha lijalo la usajili.\n\nWachambuzi wengi wa kijamii wanasisitiza umuhimu wa klabu za Ligi Kuu NBC kuwapa nafasi vijana wa akademi pamoja na kulinda wachezaji muhimu wa kikosi cha Taifa Stars.\n\nNdani ya DYFOOT unaweza kusoma uchambuzi wote kamili, kufuatilia matokeo mubashara ya timu za Tanzania na kuweka vikumbusho vya mechi bila kutoka nje ya app.",
-                category = "TANZANIA_SOCIAL",
-                sourceName = "Tanzania Social Sports Pulse",
-                sourceUrl = "",
-                published = true,
-                isExternalRss = false,
-                likesCount = 96L,
-                commentsCount = 21L,
-                publishedDateLabel = "Leo • Mitandao TZ",
-                language = "SW"
-            ),
-            NewsArticle(
-                id = "sw_caf_africa_giants",
-                title = "Ligi ya Mabingwa Afrika (CAF): Wawakilishi wa Afrika Mashariki Wapima Ubavu na Miamba ya Kaskazini",
-                summary = "Mechi za hatua muhimu za CAF Champions League na Shirikisho zinaleta msisimko mkubwa kati ya timu za Tanzania, Misri, Morocco na Afrika Kusini.",
-                content = "Michuano ya Klabu Bingwa Afrika (CAF Champions League) na Kombe la Shirikisho Afrika inaendelea kuvuta macho ya mashabiki barani kote.\n\nTimu za Afrika Mashariki zimeonyesha ukuaji mkubwa kiufundi zikikabiliana ana kwa ana na vilabu vyenye uzoefu kama Al Ahly, Mamelodi Sundowns, Wydad Casablanca na Esperance.\n\nTakwimu za H2H na kasi ya mashambulizi ndani ya DYFOOT zinaonyesha kuwa matokeo ya mechi za ugenini na umakini wa mipira iliyokufa vinaamua nafasi ya kufuzu robo na nusu fainali.",
-                category = "AFRICA_CAF",
-                sourceName = "DYFOOT Afrika & CAF Desk",
-                sourceUrl = "",
-                published = true,
-                isExternalRss = false,
-                likesCount = 145L,
-                commentsCount = 19L,
-                publishedDateLabel = "Leo • CAF Afrika",
-                language = "SW"
-            ),
-            NewsArticle(
-                id = "sw_taifa_stars_afcon",
-                title = "Taifa Stars na CECAFA: Kikosi cha Taifa Chajipanga kwa Mechi za Kimataifa na AFCON",
-                summary = "Benchi la ufundi la Taifa Stars limefuatilia kwa karibu wachezaji wanaocheza Ligi Kuu Tanzania na wale wa nje ya nchi.",
-                content = "Timu ya Taifa ya Tanzania (Taifa Stars) inaendelea kupewa pongezi mitandaoni kutokana na muunganiko mzuri wa wachezaji wa ndani na wanaosakata soka la kulipwa barani Afrika na Ulaya.\n\nKwa mujibu wa taarifa za michezo nchini Tanzania, umakini upo kwenye mechi za kufuzu mashindano ya Afrika (AFCON) na mashindano ya kikanda ya CECAFA.\n\nTumia sehemu ya Ratiba na Kionyeshi cha Mechi kwenye DYFOOT kuona muda kamili wa mechi, kikosi kinachotarajiwa na uchambuzi wa H2H.",
-                category = "TANZANIA_LIGI",
-                sourceName = "Mwanamichezo TZ Buzz",
-                sourceUrl = "",
-                published = true,
-                isExternalRss = false,
-                likesCount = 89L,
-                commentsCount = 11L,
-                publishedDateLabel = "Leo • Taifa Stars",
-                language = "SW"
-            ),
-            NewsArticle(
-                id = "sw_africa_leagues_roundup",
-                title = "Dondoo za Ligi za Afrika: FKF Kenya, PSL Afrika Kusini na Ligi ya Misri Zashika Kasi",
-                summary = "Mamelodi Sundowns, Gor Mahia na Pyramids FC zaendelea kuongoza chati za ubora katika ligi kuu za bara la Afrika.",
-                content = "Kote barani Afrika, ligi za ndani zinaonyesha soka la kuvutia lenye ushindani mkubwa wa ubingwa na nafasi za kufuzu michuano ya CAF.\n\nNchini Afrika Kusini, Mamelodi Sundowns inaendeleza soka la pasi fupi na kumiliki mpira, huku Kenya (FKF Premier League) Gor Mahia na vigogo wengine wakiwasha moto kwenye mbio za taji.\n\nDYFOOT inakuletea muhtasari huu wa Afrika kwa lugha ya Kiswahili moja kwa moja ndani ya Kituo cha Habari.",
-                category = "AFRICA_CAF",
-                sourceName = "DYFOOT Pan-Africa Sports",
-                sourceUrl = "",
-                published = true,
-                isExternalRss = false,
-                likesCount = 74L,
-                commentsCount = 8L,
-                publishedDateLabel = "Leo • Ligi za Afrika",
-                language = "SW"
-            ),
-            NewsArticle(
-                id = "sw_tz_social_young_talents",
-                title = "Instagram & TikTok Michezo TZ: Wachezaji Chipukizi wa Ligi Kuu Wapewa Sifa Kemkem",
-                summary = "Vipande vifupi vya chenga, pasi za mwisho na uokoaji bora kutoka mechi za wikiendi vyawa gumzo mitandaoni Tanzania.",
-                content = "Katika majukwaa ya kijamii ya Tanzania kama Instagram na TikTok (ikiwemo kurasa za @dyvix_ na @dyvix_02), video fupi za ufundi wa wachezaji chipukizi wa Ligi Kuu NBC zimetazamwa na maelfu ya mashabiki.\n\nMashabiki wa Coastal Union, Singida Black Stars, Azam FC, Simba na Yanga wamekuwa wakituma maoni yao kwenye makundi ya DYFOOT kuhusu nani anastahili kuwa Mchezaji Bora wa Mwezi.\n\nTembelea pia sehemu ya Tazama (Watch) na Jamii (Chat) kushiriki mijadala na mashabiki wenzako.",
-                category = "TANZANIA_SOCIAL",
-                sourceName = "DYFOOT Social TZ",
-                sourceUrl = "",
-                published = true,
-                isExternalRss = false,
-                likesCount = 112L,
-                commentsCount = 16L,
-                publishedDateLabel = "Leo • Kijamii TZ",
-                language = "SW"
-            )
-        )
-    }
-
-    private fun buildEnglishInitialInAppDesk(): List<NewsArticle> {
-        return listOf(
-            NewsArticle(
-                id = "en_world_ucl_tactics",
-                title = "Champions League & Top European Leagues: High-Press Intensity Deciding Tight Fixtures",
-                summary = "Data from Europe's top five leagues highlights compact mid-blocks, set-piece efficiency, and late-game substitutions.",
-                content = "Across Europe's flagship competitions, title contenders have relied on aggressive counter-pressing windows immediately after turnovers and disciplined box defending during the final twenty minutes.\n\nAnalysts tracking shots on target, corner frequency, and ball progression show that teams winning second balls in central midfield consistently convert territorial control into expected goals.\n\nRead the complete DYFOOT breakdown inside the app and open any fixture in Live Scores to explore animated formations and Head-to-Head statistics.",
-                category = "INTERNATIONAL",
-                sourceName = "DYFOOT World Football Desk",
-                sourceUrl = "",
-                published = true,
-                isExternalRss = false,
-                likesCount = 104L,
-                commentsCount = 9L,
-                publishedDateLabel = "Today • Global Desk",
-                language = "EN"
-            ),
-            NewsArticle(
-                id = "en_world_multisport_hub",
-                title = "Worldwide Multi-Sport Watch: Football, NBA Playoffs Tempo, ATP & UFC Headline Weekend Schedule",
-                summary = "Every live scoreboard, kick-off reminder, and pre-match statistical edge is unified directly inside DYFOOT.",
-                content = "From Premier League and LaLiga title races to NBA late-quarter rotations, Grand Slam court speeds, and championship UFC main events, DYFOOT brings real-time multi-sport tracking into one interface.\n\nBookmark matches to receive instant favorite alerts for goals, red cards, and final whistles without leaving the app.",
-                category = "WORLD_SPORTS",
-                sourceName = "DYFOOT Multi-Sport Wire",
-                sourceUrl = "",
-                published = true,
-                isExternalRss = false,
-                likesCount = 82L,
-                commentsCount = 6L,
-                publishedDateLabel = "Today • World Sports",
-                language = "EN"
-            ),
-            NewsArticle(
-                id = "en_world_transfers_radar",
-                title = "Global Transfer & Squad Rotation Radar: Young Wingers and Box-to-Box Midfielders in Focus",
-                summary = "Clubs across England, Spain, Germany, and North Africa prioritize versatile attacking profiles ahead of upcoming windows.",
-                content = "Scouting departments have shifted focus toward durable wide forwards capable of pressing relentlessly while offering one-vs-one isolation threat.\n\nIn addition, clubs competing simultaneously in domestic leagues and continental cups are rotating fullbacks heavily to sustain sprint volume across congested calendars.",
-                category = "TRANSFERS_&_TACTICS",
-                sourceName = "DYFOOT Tactics Desk",
-                sourceUrl = "",
-                published = true,
-                isExternalRss = false,
-                likesCount = 71L,
-                commentsCount = 5L,
-                publishedDateLabel = "Today • Transfers",
-                language = "EN"
-            )
-        )
-    }
-
     private fun yyyymmddForOffset(offsetDays: Int): String {
         val cal = Calendar.getInstance()
         cal.add(Calendar.DAY_OF_YEAR, offsetDays)
         return SimpleDateFormat("yyyyMMdd", Locale.US).format(cal.time)
+    }
+
+    private fun isoDateForOffset(offsetDays: Int): String {
+        val cal = Calendar.getInstance()
+        cal.add(Calendar.DAY_OF_YEAR, offsetDays)
+        return SimpleDateFormat("yyyy-MM-dd", Locale.US).format(cal.time)
     }
 
     private fun nowLabel(): String =
