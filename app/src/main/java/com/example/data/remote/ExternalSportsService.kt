@@ -40,6 +40,20 @@ sealed interface LiveApiResult<out T> {
     data class Error(val message: String) : LiveApiResult<Nothing>
 }
 
+data class ProviderSecretStatus(
+    val dataSportsConfigured: Boolean = false,
+    val liveFootballConfigured: Boolean = false,
+    val footballDataConfigured: Boolean = false,
+    val livestreamKeyConfigured: Boolean = false,
+    val livestreamFeedUrlConfigured: Boolean = false,
+    val mobileMoneyConfigured: Boolean = false
+) {
+    val hasAnyLivescoreKey: Boolean
+        get() = dataSportsConfigured || liveFootballConfigured || footballDataConfigured
+    val hasLivestreamReady: Boolean
+        get() = livestreamFeedUrlConfigured || livestreamKeyConfigured
+}
+
 data class FootballLeagueOption(
     val code: String,
     val label: String,
@@ -95,13 +109,41 @@ class ExternalSportsService {
     private fun resolveLiveFootballApiKey(): String =
         sanitizeConfiguredKey(BuildConfig.LIVE_FOOTBALL_API_KEY, "YOUR_LIVE_FOOTBALL_API_KEY")
 
+    private fun resolveLivestreamApiKey(): String =
+        sanitizeConfiguredKey(BuildConfig.LIVESTREAM_API_KEY, "YOUR_LIVESTREAM_API_KEY")
+
+    private fun resolveLivestreamFeedUrl(): String =
+        sanitizeConfiguredKey(BuildConfig.LIVESTREAM_FEED_URL, "YOUR_LIVESTREAM_FEED_URL")
+            .takeIf { it.startsWith("https://", ignoreCase = true) }
+            .orEmpty()
+
     fun hasFootballDataApiKey(): Boolean = resolveFootballDataKey().isNotEmpty()
 
     fun hasDataSportsApiKey(): Boolean = resolveDataSportsKey().isNotEmpty()
 
     fun hasLiveFootballApiKey(): Boolean = resolveLiveFootballApiKey().isNotEmpty()
 
+    fun hasLivestreamApiKey(): Boolean = resolveLivestreamApiKey().isNotEmpty()
+
+    fun hasLivestreamFeedUrl(): Boolean = resolveLivestreamFeedUrl().isNotEmpty()
+
     fun hasMobileMoneyGatewayKey(): Boolean = resolveMobileMoneyKey().isNotEmpty()
+
+    fun getLivestreamApiKeyOrEmpty(): String = resolveLivestreamApiKey()
+
+    fun resolveConfiguredLivestreamUrl(explicitFixtureUrl: String = ""): String {
+        val candidate = explicitFixtureUrl.trim().ifBlank { resolveLivestreamFeedUrl() }
+        return if (candidate.startsWith("https://", ignoreCase = true)) candidate else ""
+    }
+
+    fun getProviderSecretStatus(): ProviderSecretStatus = ProviderSecretStatus(
+        dataSportsConfigured = hasDataSportsApiKey(),
+        liveFootballConfigured = hasLiveFootballApiKey(),
+        footballDataConfigured = hasFootballDataApiKey(),
+        livestreamKeyConfigured = hasLivestreamApiKey(),
+        livestreamFeedUrlConfigured = hasLivestreamFeedUrl(),
+        mobileMoneyConfigured = hasMobileMoneyGatewayKey()
+    )
 
     /**
      * Full Worldwide Sports Live Sync:

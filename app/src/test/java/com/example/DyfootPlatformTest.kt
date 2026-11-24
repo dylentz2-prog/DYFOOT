@@ -181,11 +181,24 @@ class DyfootPlatformTest {
     }
 
     @Test
-    fun `external sports service recognizes placeholder keys as unconfigured`() {
+    fun `external sports service recognizes placeholder keys and validates livestream URLs safely`() {
         val service = ExternalSportsService()
         assertEquals("", service.sanitizeConfiguredKey("YOUR_FOOTBALL_DATA_API_KEY", "YOUR_FOOTBALL_DATA_API_KEY"))
         assertEquals("", service.sanitizeConfiguredKey("  ", "YOUR_MOBILE_MONEY_MERCHANT_KEY"))
         assertEquals("live_token_123", service.sanitizeConfiguredKey(" live_token_123 ", "YOUR_FOOTBALL_DATA_API_KEY"))
+        assertEquals("", service.resolveConfiguredLivestreamUrl("http://insecure.example.com/live.m3u8"))
+        assertEquals("", service.resolveConfiguredLivestreamUrl("YOUR_LIVESTREAM_FEED_URL"))
+        assertEquals(
+            "https://cdn.dyfoot.tz/live/match.m3u8",
+            service.resolveConfiguredLivestreamUrl(" https://cdn.dyfoot.tz/live/match.m3u8 ")
+        )
+
+        val readyStatus = com.example.data.remote.ProviderSecretStatus(
+            dataSportsConfigured = true,
+            livestreamKeyConfigured = true
+        )
+        assertTrue(readyStatus.hasAnyLivescoreKey)
+        assertTrue(readyStatus.hasLivestreamReady)
     }
 
     @Test

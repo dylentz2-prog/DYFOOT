@@ -260,6 +260,7 @@ fun AuthScreen(
                             scope = scope,
                             onAuthCancelled = {
                                 isLoading = false
+                                errorMessage = "Kuingia kumesitishwa au cheti cha SHA-1 cha APK hii hakijaunganishwa na Firebase. Hakikisha ume-push debug.keystore.base64 & app/google-services.json (na install dyfoot-debug-apk), kisha jaribu tena."
                             }
                         )
                     },

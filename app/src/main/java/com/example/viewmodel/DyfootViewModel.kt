@@ -587,6 +587,15 @@ class DyfootViewModel(
         return membership.value?.isCurrentlyActive() == true
     }
 
+    fun providerSecretStatus(): com.example.data.remote.ProviderSecretStatus =
+        sportsService.getProviderSecretStatus()
+
+    fun resolveLivestreamUrl(explicitFixtureUrl: String = ""): String =
+        sportsService.resolveConfiguredLivestreamUrl(explicitFixtureUrl)
+
+    fun livestreamApiKeyOrEmpty(): String =
+        sportsService.getLivestreamApiKeyOrEmpty()
+
     fun isAdminOrOwner(): Boolean {
         val prof = (userProfile.value as? UiState.Success)?.data ?: return false
         return prof.parsedRole() == UserRole.OWNER || prof.parsedRole() == UserRole.ADMIN

@@ -3,6 +3,7 @@ package com.example.ui.auth
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.util.Log
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
@@ -23,6 +24,12 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
 
 fun attemptAutoSignIn(
     context: Context,
@@ -56,7 +63,8 @@ fun attemptAutoSignIn(
         .build()
     scope.launch {
         try {
-            val cred = credentialManager.getCredential(context, request).credential
+            val activityContext = context.findActivity() ?: context
+            val cred = credentialManager.getCredential(activityContext, request).credential
             if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                 val token = GoogleIdTokenCredential.createFrom(cred.data).idToken
                 auth.signInWithCredential(GoogleAuthProvider.getCredential(token, null)).await()
@@ -95,7 +103,7 @@ fun onGoogleSignInClicked(
         .build()
     scope.launch {
         try {
-            val activityContext = context as? Activity ?: context
+            val activityContext = context.findActivity() ?: context
             val cred = credentialManager.getCredential(activityContext, request).credential
             if (cred is CustomCredential && cred.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                 val token = GoogleIdTokenCredential.createFrom(cred.data).idToken
@@ -105,7 +113,7 @@ fun onGoogleSignInClicked(
                 onAuthError("Unexpected credential type received")
             }
         } catch (e: GetCredentialCancellationException) {
-            Log.w("Auth", "Google Sign-In flow cancelled or dismissed: ${e.message}", e)
+            Log.w("Auth", "Google Sign-In flow cancelled or SHA-1/OAuth mismatch: ${e.message}", e)
             onAuthCancelled()
         } catch (e: Exception) {
             Log.e("Auth", "Google Sign-In failed", e)

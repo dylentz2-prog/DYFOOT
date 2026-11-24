@@ -401,6 +401,7 @@ data class FixtureItem(
     val sourceLabel: String = "DYFOOT Official",
     val streamScheduled: Boolean = false,
     val streamStatus: String = "COMING_SOON",
+    val streamUrl: String = "",
     val eventsSummary: String = "",
     val published: Boolean = true,
     val homeLogoUrl: String = "",

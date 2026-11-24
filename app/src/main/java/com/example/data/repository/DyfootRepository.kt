@@ -1616,6 +1616,13 @@ class DyfootRepository(
         val uid = auth.currentUser?.uid ?: return Result.failure(IllegalStateException("Not signed in"))
         val isNew = fixture.id.isBlank()
         val ref = if (isNew) db.collection("fixtures").document() else db.collection("fixtures").document(fixture.id)
+        val sanitizedStreamUrl = fixture.streamUrl.trim().take(1000).let { raw ->
+            when {
+                raw.isBlank() -> ""
+                raw.startsWith("https://", ignoreCase = true) -> raw
+                else -> return Result.failure(IllegalArgumentException("Livestream URL must start with https://"))
+            }
+        }
         return try {
             val payload = mutableMapOf<String, Any>(
                 "authorId" to (fixture.authorId.ifBlank { uid }),
@@ -1631,6 +1638,7 @@ class DyfootRepository(
                 "sourceLabel" to fixture.sourceLabel.trim().take(100).ifBlank { "DYFOOT Official" },
                 "streamScheduled" to fixture.streamScheduled,
                 "streamStatus" to fixture.streamStatus,
+                "streamUrl" to sanitizedStreamUrl,
                 "eventsSummary" to fixture.eventsSummary.trim().take(1000),
                 "published" to fixture.published,
                 "updatedAt" to FieldValue.serverTimestamp()

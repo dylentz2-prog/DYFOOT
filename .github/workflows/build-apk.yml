@@ -66,13 +66,16 @@ jobs:
           rm -f debug.keystore
           if [ -f debug.keystore.base64 ]; then
             echo "Decoding debug.keystore from debug.keystore.base64..."
-            if tr -d '[:space:]' < debug.keystore.base64 | base64 -d > debug.keystore 2>/dev/null && test -s debug.keystore; then
+            if tr -d '[:space:]' < debug.keystore.base64 | base64 -d > debug.keystore 2>/dev/null \
+              && test -s debug.keystore \
+              && keytool -list -keystore debug.keystore -storepass android >/dev/null 2>&1; then
               echo "KEYSTORE_SOURCE=repo_base64" >> "$GITHUB_ENV"
             else
               rm -f debug.keystore
-              echo "::warning::debug.keystore.base64 could not be decoded; generating fallback debug.keystore."
+              echo "::warning::debug.keystore.base64 could not be decoded cleanly; checking DEBUG_KEYSTORE_BASE64 secret."
             fi
-          elif [ -n "$DEBUG_KEYSTORE_BASE64" ]; then
+          fi
+          if [ ! -f debug.keystore ] && [ -n "$DEBUG_KEYSTORE_BASE64" ]; then
             echo "Decoding debug.keystore from DEBUG_KEYSTORE_BASE64 secret..."
             if printf '%s' "$DEBUG_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > debug.keystore 2>/dev/null \
               && test -s debug.keystore \
@@ -80,7 +83,7 @@ jobs:
               echo "KEYSTORE_SOURCE=github_secret" >> "$GITHUB_ENV"
             else
               rm -f debug.keystore
-              echo "::warning::DEBUG_KEYSTORE_BASE64 secret is invalid (not a Base64 debug.keystore). Delete DEBUG_KEYSTORE_BASE64 in GitHub Secrets or paste valid debug.keystore.base64. Falling back to generated debug.keystore."
+              echo "::warning::DEBUG_KEYSTORE_BASE64 secret is invalid (not a Base64 debug.keystore). Push debug.keystore.base64 to the repo or replace DEBUG_KEYSTORE_BASE64 with valid Base64. Falling back to generated debug.keystore."
             fi
           fi
           if [ ! -f debug.keystore ]; then
@@ -98,8 +101,15 @@ jobs:
             echo "KEYSTORE_SOURCE=ephemeral_generated" >> "$GITHUB_ENV"
           fi
           test -s debug.keystore
-          echo "Debug keystore public certificate fingerprints (register SHA1 in Firebase Console if using newly generated keystore):"
-          keytool -list -v -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android 2>/dev/null | grep -E 'SHA1:|SHA256:' || true
+          ACTIVE_SHA1="$(keytool -list -v -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android 2>/dev/null | sed -n 's/.*SHA1:[[:space:]]*//p' | head -n 1)"
+          ACTIVE_SHA256="$(keytool -list -v -keystore debug.keystore -alias androiddebugkey -storepass android -keypass android 2>/dev/null | sed -n 's/.*SHA256:[[:space:]]*//p' | head -n 1)"
+          ACTIVE_SHA1_HASH="$(printf '%s' "$ACTIVE_SHA1" | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          echo "ACTIVE_DEBUG_SHA1=$ACTIVE_SHA1" >> "$GITHUB_ENV"
+          echo "ACTIVE_DEBUG_SHA256=$ACTIVE_SHA256" >> "$GITHUB_ENV"
+          echo "ACTIVE_DEBUG_SHA1_HASH=$ACTIVE_SHA1_HASH" >> "$GITHUB_ENV"
+          echo "Debug keystore public certificate fingerprints:"
+          echo "  SHA1: $ACTIVE_SHA1"
+          echo "  SHA256: $ACTIVE_SHA256"
 
       - name: Prepare .env & Firebase config
         env:
@@ -107,59 +117,74 @@ jobs:
           MOBILE_MONEY_MERCHANT_KEY: ${{ secrets.MOBILE_MONEY_MERCHANT_KEY }}
           DATASPORTS_API_KEY: ${{ secrets.DATASPORTS_API_KEY }}
           LIVE_FOOTBALL_API_KEY: ${{ secrets.LIVE_FOOTBALL_API_KEY }}
+          LIVESTREAM_API_KEY: ${{ secrets.LIVESTREAM_API_KEY }}
+          LIVESTREAM_FEED_URL: ${{ secrets.LIVESTREAM_FEED_URL }}
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
           GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
         run: |
           if [ ! -f .env.example ]; then
             printf '%s\n' \
-              'FOOTBALL_DATA_API_KEY=YOUR_FOOTBALL_DATA_API_KEY' \
-              'MOBILE_MONEY_MERCHANT_KEY=YOUR_MOBILE_MONEY_MERCHANT_KEY' \
               'DATASPORTS_API_KEY=YOUR_DATASPORTS_API_KEY' \
-              'LIVE_FOOTBALL_API_KEY=YOUR_LIVE_FOOTBALL_API_KEY' > .env.example
+              'LIVE_FOOTBALL_API_KEY=YOUR_LIVE_FOOTBALL_API_KEY' \
+              'FOOTBALL_DATA_API_KEY=YOUR_FOOTBALL_DATA_API_KEY' \
+              'LIVESTREAM_API_KEY=YOUR_LIVESTREAM_API_KEY' \
+              'LIVESTREAM_FEED_URL=YOUR_LIVESTREAM_FEED_URL' \
+              'MOBILE_MONEY_MERCHANT_KEY=YOUR_MOBILE_MONEY_MERCHANT_KEY' > .env.example
           fi
           cp .env.example .env
-          if [ -n "$FOOTBALL_DATA_API_KEY" ]; then
-            grep -v '^FOOTBALL_DATA_API_KEY=' .env > .env.tmp && mv .env.tmp .env
-            printf 'FOOTBALL_DATA_API_KEY=%s\n' "$FOOTBALL_DATA_API_KEY" >> .env
-          fi
-          if [ -n "$MOBILE_MONEY_MERCHANT_KEY" ]; then
-            grep -v '^MOBILE_MONEY_MERCHANT_KEY=' .env > .env.tmp && mv .env.tmp .env
-            printf 'MOBILE_MONEY_MERCHANT_KEY=%s\n' "$MOBILE_MONEY_MERCHANT_KEY" >> .env
-          fi
-          if [ -n "$DATASPORTS_API_KEY" ]; then
-            grep -v '^DATASPORTS_API_KEY=' .env > .env.tmp && mv .env.tmp .env
-            printf 'DATASPORTS_API_KEY=%s\n' "$DATASPORTS_API_KEY" >> .env
-          fi
-          if [ -n "$LIVE_FOOTBALL_API_KEY" ]; then
-            grep -v '^LIVE_FOOTBALL_API_KEY=' .env > .env.tmp && mv .env.tmp .env
-            printf 'LIVE_FOOTBALL_API_KEY=%s\n' "$LIVE_FOOTBALL_API_KEY" >> .env
-          fi
-          if [ ! -f app/google-services.json ] && [ -n "$GOOGLE_SERVICES_JSON" ]; then
-            printf '%s\n' "$GOOGLE_SERVICES_JSON" > app/google-services.json
-            if ! python3 -m json.tool app/google-services.json >/dev/null 2>&1; then
-              if printf '%s' "$GOOGLE_SERVICES_JSON" | tr -d '[:space:]' | base64 -d > app/google-services.json.tmp 2>/dev/null \
-                && python3 -m json.tool app/google-services.json.tmp >/dev/null 2>&1; then
-                mv app/google-services.json.tmp app/google-services.json
-              else
-                rm -f app/google-services.json app/google-services.json.tmp
-                echo "::warning::GOOGLE_SERVICES_JSON secret is not valid JSON. Copy the exact contents of app/google-services.json (starting with { and ending with }) into GOOGLE_SERVICES_JSON."
-              fi
+          upsert_env() {
+            KEY="$1"
+            VAL="$2"
+            if [ -n "$VAL" ]; then
+              grep -v "^${KEY}=" .env > .env.tmp && mv .env.tmp .env
+              printf '%s=%s\n' "$KEY" "$VAL" >> .env
             fi
-          elif [ ! -f app/google-services.json ] && [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
-            if printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | tr -d '[:space:]' | base64 -d > app/google-services.json.tmp 2>/dev/null \
-              && python3 -m json.tool app/google-services.json.tmp >/dev/null 2>&1; then
-              mv app/google-services.json.tmp app/google-services.json
+          }
+          upsert_env "FOOTBALL_DATA_API_KEY" "$FOOTBALL_DATA_API_KEY"
+          upsert_env "MOBILE_MONEY_MERCHANT_KEY" "$MOBILE_MONEY_MERCHANT_KEY"
+          upsert_env "DATASPORTS_API_KEY" "$DATASPORTS_API_KEY"
+          upsert_env "LIVE_FOOTBALL_API_KEY" "$LIVE_FOOTBALL_API_KEY"
+          upsert_env "LIVESTREAM_API_KEY" "$LIVESTREAM_API_KEY"
+          upsert_env "LIVESTREAM_FEED_URL" "$LIVESTREAM_FEED_URL"
+
+          # If GOOGLE_SERVICES_JSON(_BASE64) secret is set and valid JSON, prefer it so updated secrets override stale repo files
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            printf '%s\n' "$GOOGLE_SERVICES_JSON" > app/google-services.json.secret
+            if python3 -m json.tool app/google-services.json.secret >/dev/null 2>&1; then
+              mv app/google-services.json.secret app/google-services.json
+              echo "Loaded app/google-services.json from GOOGLE_SERVICES_JSON secret."
+            elif printf '%s' "$GOOGLE_SERVICES_JSON" | tr -d '[:space:]' | base64 -d > app/google-services.json.secret 2>/dev/null \
+              && python3 -m json.tool app/google-services.json.secret >/dev/null 2>&1; then
+              mv app/google-services.json.secret app/google-services.json
+              echo "Loaded app/google-services.json from base64 GOOGLE_SERVICES_JSON secret."
             else
-              rm -f app/google-services.json app/google-services.json.tmp
+              rm -f app/google-services.json.secret
+              echo "::warning::GOOGLE_SERVICES_JSON secret is not valid JSON; keeping repo app/google-services.json if present."
+            fi
+          elif [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+            if printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | tr -d '[:space:]' | base64 -d > app/google-services.json.secret 2>/dev/null \
+              && python3 -m json.tool app/google-services.json.secret >/dev/null 2>&1; then
+              mv app/google-services.json.secret app/google-services.json
+              echo "Loaded app/google-services.json from GOOGLE_SERVICES_JSON_BASE64 secret."
+            else
+              rm -f app/google-services.json.secret
               echo "::warning::GOOGLE_SERVICES_JSON_BASE64 secret could not be decoded as valid JSON."
             fi
           fi
+
           if [ -f app/google-services.json ] && python3 -m json.tool app/google-services.json >/dev/null 2>&1; then
             echo "Verified app/google-services.json is valid JSON."
             echo "FIREBASE_CONFIG_PRESENT=true" >> "$GITHUB_ENV"
+            if [ -n "${ACTIVE_DEBUG_SHA1_HASH:-}" ] && grep -qi "$ACTIVE_DEBUG_SHA1_HASH" app/google-services.json; then
+              echo "FIREBASE_SHA1_MATCHED=true" >> "$GITHUB_ENV"
+            else
+              echo "FIREBASE_SHA1_MATCHED=false" >> "$GITHUB_ENV"
+              echo "::warning::Signing SHA-1 ($ACTIVE_DEBUG_SHA1) is NOT inside app/google-services.json — Google Sign-In will cancel on device!"
+            fi
           else
             rm -f app/google-services.json
             echo "FIREBASE_CONFIG_PRESENT=false" >> "$GITHUB_ENV"
+            echo "FIREBASE_SHA1_MATCHED=false" >> "$GITHUB_ENV"
             echo "::warning::app/google-services.json is missing or invalid in GitHub. Add app/google-services.json or set a valid GOOGLE_SERVICES_JSON secret in GitHub Actions."
           fi
 
@@ -179,10 +204,18 @@ jobs:
               echo "- **Firebase (app/google-services.json):** MISSING — Add GOOGLE_SERVICES_JSON (or GOOGLE_SERVICES_JSON_BASE64) in GitHub Repository Secrets, or upload app/google-services.json, otherwise the APK opens to the Firebase Setup screen."
             fi
             if [ "${KEYSTORE_SOURCE:-}" = "ephemeral_generated" ]; then
-              echo "- **Debug Signing Keystore:** Ephemeral generated — Add DEBUG_KEYSTORE_BASE64 in GitHub Secrets so Google Sign-In SHA-1 matches Firebase."
+              echo "- **Debug Signing Keystore:** Ephemeral generated — Push \`debug.keystore.base64\` to GitHub OR set valid \`DEBUG_KEYSTORE_BASE64\` in GitHub Secrets so SHA-1 stops changing every build."
             else
               echo "- **Debug Signing Keystore:** Included (${KEYSTORE_SOURCE:-ok})"
             fi
+            echo "- **Debug APK SHA-1:** \`${ACTIVE_DEBUG_SHA1:-unknown}\`"
+            echo "- **Debug APK SHA-256:** \`${ACTIVE_DEBUG_SHA256:-unknown}\`"
+            if [ "${FIREBASE_SHA1_MATCHED:-false}" = "true" ]; then
+              echo "- **Google Sign-In Fingerprint Check:** MATCHED (Debug APK SHA-1 is registered in \`app/google-services.json\`)"
+            else
+              echo "- **Google Sign-In Fingerprint Check:** MISMATCH — This APK's SHA-1 is NOT in \`app/google-services.json\`! Google Sign-In will loop on the login screen until you push \`debug.keystore.base64\` (and \`app/google-services.json\`) or add this SHA-1 in Firebase Console."
+            fi
+            echo "- **Note:** Install \`dyfoot-debug-apk\` unless you also registered your release keystore SHA-1 in Firebase Console."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Debug APK artifact

@@ -244,7 +244,8 @@ service cloud.firestore {
              (!('venue' in data) || (data.venue is string && data.venue.size() <= 120)) &&
              data.sourceLabel is string && data.sourceLabel.size() >= 1 && data.sourceLabel.size() <= 100 &&
              data.streamScheduled is bool &&
-             data.streamStatus in ['COMING_SOON', 'SCHEDULED'] &&
+             data.streamStatus in ['COMING_SOON', 'SCHEDULED', 'LIVE'] &&
+             (!('streamUrl' in data) || (data.streamUrl is string && data.streamUrl.size() <= 1000 && (data.streamUrl == '' || data.streamUrl.matches('^https://.*')))) &&
              (!('eventsSummary' in data) || (data.eventsSummary is string && data.eventsSummary.size() <= 1000)) &&
              data.published is bool &&
              isValidTimestamp(data.createdAt) &&
@@ -669,7 +670,7 @@ service cloud.firestore {
                        isValidFixture(incoming()) &&
                        incoming().authorId == request.auth.uid &&
                        incoming().keys().hasAll(['authorId', 'homeTeam', 'awayTeam', 'competition', 'homeScore', 'awayScore', 'status', 'minuteLabel', 'kickoffEpochMs', 'sourceLabel', 'streamScheduled', 'streamStatus', 'published', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['authorId', 'homeTeam', 'awayTeam', 'competition', 'homeScore', 'awayScore', 'status', 'minuteLabel', 'kickoffEpochMs', 'venue', 'sourceLabel', 'streamScheduled', 'streamStatus', 'eventsSummary', 'published', 'createdAt', 'updatedAt']);
+                       incoming().keys().hasOnly(['authorId', 'homeTeam', 'awayTeam', 'competition', 'homeScore', 'awayScore', 'status', 'minuteLabel', 'kickoffEpochMs', 'venue', 'sourceLabel', 'streamScheduled', 'streamStatus', 'streamUrl', 'eventsSummary', 'published', 'createdAt', 'updatedAt']);
       allow update: if isAdmin() &&
                        isValidId(fixtureId) &&
                        isValidFixture(incoming()) &&

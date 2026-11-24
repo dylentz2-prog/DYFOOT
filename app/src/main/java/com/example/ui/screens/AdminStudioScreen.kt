@@ -688,6 +688,7 @@ private fun AdminFixturesSection(viewModel: DyfootViewModel) {
     var venue by remember { mutableStateOf("") }
     var eventsSummary by remember { mutableStateOf("") }
     var streamScheduled by remember { mutableStateOf(true) }
+    var streamUrl by remember { mutableStateOf("") }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -721,9 +722,20 @@ private fun AdminFixturesSection(viewModel: DyfootViewModel) {
                         Text("Schedule on Live Arena", color = CrispWhite, modifier = Modifier.weight(1f))
                         Switch(checked = streamScheduled, onCheckedChange = { streamScheduled = it })
                     }
+                    if (streamScheduled) {
+                        OutlinedTextField(
+                            value = streamUrl,
+                            onValueChange = { streamUrl = it },
+                            label = { Text("Licensed HLS/HTTPS Stream URL (optional)") },
+                            placeholder = { Text("https://... .m3u8 (or uses LIVESTREAM_FEED_URL secret)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                    }
                     Button(
                         onClick = {
                             if (home.isBlank() || away.isBlank()) return@Button
+                            val cleanUrl = streamUrl.trim()
                             viewModel.saveFixture(
                                 FixtureItem(
                                     homeTeam = home.trim(),
@@ -737,11 +749,16 @@ private fun AdminFixturesSection(viewModel: DyfootViewModel) {
                                     venue = venue.trim(),
                                     sourceLabel = "DYFOOT Official",
                                     streamScheduled = streamScheduled,
-                                    streamStatus = if (streamScheduled) "SCHEDULED" else "COMING_SOON",
+                                    streamStatus = when {
+                                        streamScheduled && cleanUrl.startsWith("https://") && status == FixtureStatus.LIVE -> "LIVE"
+                                        streamScheduled -> "SCHEDULED"
+                                        else -> "COMING_SOON"
+                                    },
+                                    streamUrl = cleanUrl,
                                     eventsSummary = eventsSummary.trim(),
                                     published = true
                                 )
-                            ) { home = ""; away = ""; eventsSummary = "" }
+                            ) { home = ""; away = ""; eventsSummary = ""; streamUrl = "" }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = NeonLime, contentColor = MidnightBlack),
                         modifier = Modifier.fillMaxWidth()
@@ -1054,6 +1071,68 @@ private fun AdminSettingsSection(viewModel: DyfootViewModel) {
                     ) { Text("Save & Push Live Update", fontWeight = FontWeight.Bold) }
                 }
             }
+        }
+
+        item {
+            val status = remember { viewModel.providerSecretStatus() }
+            Card(
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = MidnightCard),
+                border = BorderStroke(1.dp, MidnightBorder),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("admin_secrets_status_card")
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Livescore & Livestream Secrets Status",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = NeonLime
+                    )
+                    Text(
+                        text = "Manage secret values in AI Studio -> Secrets (and GitHub Repository Secrets for CI APKs).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = SlateText
+                    )
+                    SecretStatusRow("DATASPORTS_API_KEY (Livescore)", status.dataSportsConfigured)
+                    SecretStatusRow("LIVE_FOOTBALL_API_KEY (Live Matches)", status.liveFootballConfigured)
+                    SecretStatusRow("FOOTBALL_DATA_API_KEY (Tables/Scores)", status.footballDataConfigured)
+                    SecretStatusRow("LIVESTREAM_API_KEY (Live Arena Token)", status.livestreamKeyConfigured)
+                    SecretStatusRow("LIVESTREAM_FEED_URL (Live Arena Stream)", status.livestreamFeedUrlConfigured)
+                    SecretStatusRow("MOBILE_MONEY_MERCHANT_KEY (Payments)", status.mobileMoneyConfigured)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SecretStatusRow(label: String, configured: Boolean) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = CrispWhite,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = if (configured) WonEmeraldContainer else VipAmberContainer
+        ) {
+            Text(
+                text = if (configured) "CONFIGURED" else "NOT SET",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = if (configured) WonEmerald else VipAmber,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+            )
         }
     }
 }
