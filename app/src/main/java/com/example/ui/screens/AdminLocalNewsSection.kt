@@ -18,11 +18,11 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.VerifiedUser
@@ -634,7 +634,7 @@ fun AdminBilingualNewsPanel(
                             border = BorderStroke(1.dp, NeonLime.copy(alpha = 0.6f)),
                             modifier = Modifier.testTag("admin_news_preview_btn")
                         ) {
-                            Icon(Icons.Filled.MenuBook, contentDescription = null, tint = NeonLime, modifier = Modifier.size(16.dp))
+                            Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = null, tint = NeonLime, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Preview", color = NeonLime)
                         }

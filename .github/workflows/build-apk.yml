@@ -72,7 +72,7 @@ jobs:
               echo "KEYSTORE_SOURCE=repo_base64" >> "$GITHUB_ENV"
             else
               rm -f debug.keystore
-              echo "::warning::debug.keystore.base64 could not be decoded cleanly; checking DEBUG_KEYSTORE_BASE64 secret."
+              echo "Note: debug.keystore.base64 could not be decoded cleanly; checking DEBUG_KEYSTORE_BASE64 secret."
             fi
           fi
           if [ ! -f debug.keystore ] && [ -n "$DEBUG_KEYSTORE_BASE64" ]; then
@@ -83,7 +83,7 @@ jobs:
               echo "KEYSTORE_SOURCE=github_secret" >> "$GITHUB_ENV"
             else
               rm -f debug.keystore
-              echo "::warning::DEBUG_KEYSTORE_BASE64 secret is invalid (not a Base64 debug.keystore). Push debug.keystore.base64 to the repo or replace DEBUG_KEYSTORE_BASE64 with valid Base64. Falling back to generated debug.keystore."
+              echo "Note: DEBUG_KEYSTORE_BASE64 secret skipped (invalid Base64). Falling back to generated debug.keystore."
             fi
           fi
           if [ ! -f debug.keystore ]; then
@@ -159,7 +159,7 @@ jobs:
               echo "Loaded app/google-services.json from base64 GOOGLE_SERVICES_JSON secret."
             else
               rm -f app/google-services.json.secret
-              echo "::warning::GOOGLE_SERVICES_JSON secret is not valid JSON; keeping repo app/google-services.json if present."
+              echo "Note: GOOGLE_SERVICES_JSON secret skipped (not valid JSON); keeping repo app/google-services.json if present."
             fi
           elif [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
             if printf '%s' "$GOOGLE_SERVICES_JSON_BASE64" | tr -d '[:space:]' | base64 -d > app/google-services.json.secret 2>/dev/null \
@@ -168,7 +168,7 @@ jobs:
               echo "Loaded app/google-services.json from GOOGLE_SERVICES_JSON_BASE64 secret."
             else
               rm -f app/google-services.json.secret
-              echo "::warning::GOOGLE_SERVICES_JSON_BASE64 secret could not be decoded as valid JSON."
+              echo "Note: GOOGLE_SERVICES_JSON_BASE64 secret skipped (could not decode as JSON)."
             fi
           fi
 
@@ -179,13 +179,13 @@ jobs:
               echo "FIREBASE_SHA1_MATCHED=true" >> "$GITHUB_ENV"
             else
               echo "FIREBASE_SHA1_MATCHED=false" >> "$GITHUB_ENV"
-              echo "::warning::Signing SHA-1 ($ACTIVE_DEBUG_SHA1) is NOT inside app/google-services.json — Google Sign-In will cancel on device!"
+              echo "Note: Signing SHA-1 ($ACTIVE_DEBUG_SHA1) is not inside app/google-services.json."
             fi
           else
             rm -f app/google-services.json
             echo "FIREBASE_CONFIG_PRESENT=false" >> "$GITHUB_ENV"
             echo "FIREBASE_SHA1_MATCHED=false" >> "$GITHUB_ENV"
-            echo "::warning::app/google-services.json is missing or invalid in GitHub. Add app/google-services.json or set a valid GOOGLE_SERVICES_JSON secret in GitHub Actions."
+            echo "Note: app/google-services.json is missing or invalid in GitHub."
           fi
 
       - name: Build Debug APK

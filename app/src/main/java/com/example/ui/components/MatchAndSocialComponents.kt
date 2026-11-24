@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.ConfirmationNumber
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Groups
@@ -36,7 +37,6 @@ import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sports
 import androidx.compose.material.icons.filled.Stadium
-import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material3.Button
@@ -749,7 +749,7 @@ fun MatchCenterBottomSheet(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Filled.TrendingUp, contentDescription = null, tint = VipAmber, modifier = Modifier.size(18.dp))
+                                    Icon(Icons.AutoMirrored.Filled.TrendingUp, contentDescription = null, tint = VipAmber, modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(copy.fanPredictionTitle, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = CrispWhite)
                                 }

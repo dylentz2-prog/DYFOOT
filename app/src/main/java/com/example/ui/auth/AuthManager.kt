@@ -4,7 +4,10 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.pm.PackageManager
+import android.os.Build
 import android.util.Log
+import java.security.MessageDigest
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
@@ -158,4 +161,23 @@ private fun resolveWebClientId(context: Context): String? {
     return runCatching { context.getString(resId).trim() }
         .getOrNull()
         ?.takeIf { it.isNotBlank() }
+}
+
+fun readApkSigningSha1(context: Context): String? {
+    return runCatching {
+        val pm = context.packageManager
+        val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val info = pm.getPackageInfo(context.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+            val signingInfo = info.signingInfo
+            if (signingInfo == null) null
+            else if (signingInfo.hasMultipleSigners()) signingInfo.apkContentsSigners
+            else signingInfo.signingCertificateHistory
+        } else {
+            @Suppress("DEPRECATION")
+            pm.getPackageInfo(context.packageName, PackageManager.GET_SIGNATURES).signatures
+        }
+        val certBytes = signatures?.firstOrNull()?.toByteArray() ?: return null
+        val digest = MessageDigest.getInstance("SHA-1").digest(certBytes)
+        digest.joinToString(":") { byte -> "%02X".format(byte) }
+    }.getOrNull()
 }

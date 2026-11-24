@@ -481,7 +481,7 @@ class DyfootViewModel(
                 val (canReadVip, isAdminOrOwner, tips) = triple
                 val nowActive = mem?.isCurrentlyActive() == true
                 if (previousVipActive == false && nowActive) {
-                    val plan = mem?.planName ?: "VIP Package"
+                    val plan = mem.planName
                     val isSw = appLanguage.value == AppLanguage.SWAHILI
                     _pendingVipPush.value = null
                     notificationHelper?.notifyVipActivated(plan, isSw)
@@ -1249,7 +1249,7 @@ class DyfootViewModel(
 
         viewModelScope.launch {
             val isNew = existingAd == null || existingAd.id.isBlank()
-            val targetAdId = if (isNew) repository.newAdvertisementId() else existingAd!!.id
+            val targetAdId = if (isNew) repository.newAdvertisementId() else existingAd.id
 
             var finalImageUrl = keepExistingImageUrl.trim()
             var finalStoragePath = keepExistingStoragePath.trim()

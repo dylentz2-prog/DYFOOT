@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.SportsSoccer
@@ -34,6 +35,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -50,10 +52,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -73,11 +77,15 @@ fun AuthScreen(
     onAuthSuccess: () -> Unit
 ) {
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     val credentialManager = remember(context) { CredentialManager.create(context) }
+    val runtimeApkSha1 = remember(context) { readApkSigningSha1(context) }
 
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var cancelledApkSha1 by remember { mutableStateOf<String?>(null) }
+    var copiedSha1 by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         attemptAutoSignIn(
@@ -124,14 +132,14 @@ fun AuthScreen(
                 .statusBarsPadding()
                 .navigationBarsPadding()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 20.dp)
+                .padding(horizontal = 24.dp, vertical = 18.dp)
                 .widthIn(max = 560.dp)
-                .align(Alignment.Center),
+                .align(Alignment.TopCenter),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween
+            verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Spacer(modifier = Modifier.height(28.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 Surface(
                     shape = RoundedCornerShape(22.dp),
@@ -233,12 +241,45 @@ fun AuthScreen(
                             .fillMaxWidth()
                             .padding(bottom = 14.dp)
                     ) {
-                        Text(
-                            text = errorMessage ?: "",
-                            color = CrispWhite,
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(14.dp)
-                        )
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = errorMessage ?: "",
+                                color = CrispWhite,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            if (!cancelledApkSha1.isNullOrBlank()) {
+                                Text(
+                                    text = "APK SHA-1: $cancelledApkSha1",
+                                    color = NeonLime,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                OutlinedButton(
+                                    onClick = {
+                                        clipboard.setText(AnnotatedString(cancelledApkSha1.orEmpty()))
+                                        copiedSha1 = true
+                                    },
+                                    border = BorderStroke(1.dp, NeonLime.copy(alpha = 0.7f)),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.ContentCopy,
+                                        contentDescription = null,
+                                        tint = NeonLime,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = if (copiedSha1) "SHA-1 Imenakiliwa!" else "Nakili SHA-1 ya APK hii",
+                                        color = NeonLime,
+                                        style = MaterialTheme.typography.labelLarge
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -246,6 +287,8 @@ fun AuthScreen(
                     onClick = {
                         isLoading = true
                         errorMessage = null
+                        cancelledApkSha1 = null
+                        copiedSha1 = false
                         onGoogleSignInClicked(
                             context = context,
                             credentialManager = credentialManager,
@@ -260,7 +303,8 @@ fun AuthScreen(
                             scope = scope,
                             onAuthCancelled = {
                                 isLoading = false
-                                errorMessage = "Kuingia kumesitishwa au cheti cha SHA-1 cha APK hii hakijaunganishwa na Firebase. Hakikisha ume-push debug.keystore.base64 & app/google-services.json (na install dyfoot-debug-apk), kisha jaribu tena."
+                                cancelledApkSha1 = runtimeApkSha1
+                                errorMessage = "Kuingia kumesitishwa au cheti cha SHA-1 cha APK hii hakijaunganishwa na Firebase. Push debug.keystore.base64 & app/google-services.json (au tuma SHA-1 hapa chini)."
                             }
                         )
                     },

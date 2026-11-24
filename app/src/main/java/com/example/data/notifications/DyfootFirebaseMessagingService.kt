@@ -106,6 +106,7 @@ object DyfootFcmManager {
         return title to body
     }
 
+    @Suppress("DEPRECATION")
     suspend fun fetchAndStoreToken(prefs: UserPreferencesDataStore): String {
         val token = runCatching { Firebase.messaging.token.await() }.getOrElse { "" }
         if (token.isNotBlank()) {
@@ -172,6 +173,7 @@ class DyfootFirebaseMessagingService : FirebaseMessagingService() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    @Suppress("OVERRIDE_DEPRECATION", "DEPRECATION")
     override fun onNewToken(token: String) {
         super.onNewToken(token)
         val appContext = applicationContext
